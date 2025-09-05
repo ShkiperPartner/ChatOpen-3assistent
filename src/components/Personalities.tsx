@@ -55,12 +55,19 @@ export const Personalities: React.FC = () => {
     
     try {
       setIsProcessingFile(true);
+      setFileError(null);
       
       // Create personality first
       const newPersonality = await createPersonality(formData.name.trim(), formData.prompt.trim(), formData.has_memory);
       
+      // Check if personality creation was successful
+      if (!newPersonality) {
+        setFileError('Failed to create personality. Please check your settings and try again.');
+        return;
+      }
+      
       // If file was selected and personality was created successfully, upload file
-      if (newPersonality && formData.selectedFile) {
+      if (formData.selectedFile) {
         await uploadPersonalityFile(newPersonality.id, formData.selectedFile);
         
         // Update personality with file instruction if provided
@@ -71,7 +78,7 @@ export const Personalities: React.FC = () => {
         }
       }
       
-      // Reset form
+      // Reset form only on successful creation
       setFormData({ name: '', prompt: '', has_memory: true, file_instruction: '', selectedFile: null });
       setFileError(null);
       setShowCreateForm(false);

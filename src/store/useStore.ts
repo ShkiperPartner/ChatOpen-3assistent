@@ -489,7 +489,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   createPersonality: async (name, prompt, hasMemory = true) => {
     const { user, settings, assistantService } = get();
-    if (!user) return null;
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
 
     try {
       let assistantId: string | null = null;
@@ -517,21 +519,25 @@ export const useStore = create<AppState>((set, get) => ({
           user_id: user.id,
           name,
           prompt,
-          is_active: false,
           has_memory: hasMemory,
           openai_assistant_id: assistantId
         })
         .select()
         .single();
 
-      if (!error && data) {
+      if (error) {
+        throw new Error(`Failed to save personality: ${error.message}`);
+      }
+
+      if (data) {
         set(state => ({ personalities: [data, ...state.personalities] }));
         return data;
       }
-      return null;
+
+      throw new Error('No data returned from personality creation');
     } catch (error) {
       console.error('Error creating personality:', error);
-      return null;
+      throw error; // Re-throw to let UI handle the error
     }
   },
 
