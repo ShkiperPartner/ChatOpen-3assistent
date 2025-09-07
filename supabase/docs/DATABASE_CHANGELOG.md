@@ -16,22 +16,35 @@ personalities {
   id: UUID PRIMARY KEY
   user_id: UUID → auth.users (NOT NULL)
   name: TEXT (NOT NULL) -- название ассистента
+  description: TEXT -- описание ассистента
   prompt: TEXT (NOT NULL) -- базовый системный промпт
-  is_active: BOOLEAN DEFAULT false -- активная личность
+  is_active: BOOLEAN DEFAULT true -- активная личность
   has_memory: BOOLEAN DEFAULT true -- память разговоров
-  created_at: TIMESTAMP DEFAULT NOW()
-  updated_at: TIMESTAMP DEFAULT NOW()
-  openai_assistant_id: TEXT -- ID ассистента в OpenAI
   files: JSONB DEFAULT '[]' -- массив файлов PersonalityFile[]
   file_instruction: TEXT -- общая инструкция для всех файлов
+  openai_assistant_id: TEXT -- ID ассистента в OpenAI
+  openai_file_id: TEXT -- ID файла в OpenAI
+  
+  -- RAG поля (опционально для векторного поиска):
+  file_name: TEXT -- имя загруженного файла
+  file_content: TEXT -- содержимое файла для резерва
+  uploaded_at: TIMESTAMP -- время загрузки файла
+  chunk_size: INTEGER DEFAULT 800 -- размер чанков для RAG
+  top_chunks: INTEGER DEFAULT 3 -- количество релевантных чанков
+  embedding_model: TEXT DEFAULT 'text-embedding-3-small' -- модель эмбеддингов
+  
+  created_at: TIMESTAMP DEFAULT NOW()
+  updated_at: TIMESTAMP DEFAULT NOW()
 }
 
 -- Индексы:
--- personalities_files_gin_idx (GIN на files)
+-- personalities_user_id_idx (на user_id для RLS)
+-- personalities_active_idx (на is_active WHERE is_active = true)
 -- personalities_assistant_id_idx (на openai_assistant_id)
 
--- Constraints:
--- personalities_files_limit: jsonb_array_length(files) <= 20
+-- RLS Policies:
+-- Users can view/insert/update/delete their own personalities
+-- Все операции фильтруются по auth.uid() = user_id
 ```
 
 #### `chats` - чаты пользователей

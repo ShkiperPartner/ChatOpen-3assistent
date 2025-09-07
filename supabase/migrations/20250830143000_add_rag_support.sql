@@ -1,12 +1,18 @@
 /*
   # Add RAG support to personalities
 
-  1. Schema Changes
+  1. Extensions
+    - Enable pgcrypto for UUID generation
+    - Enable vector extension for embeddings
+
+  2. Schema Changes
+    - Add user_id to personalities table for RLS
     - Add file-related fields to `personalities` table
     - Add configurable RAG parameters
     - Create `personality_embeddings` table for vector storage
 
-  2. New Fields in personalities:
+  3. New Fields in personalities:
+    - user_id: User reference for RLS policies
     - file_name: Original filename
     - file_instruction: User instructions for file usage
     - file_content: Backup of file content
@@ -16,72 +22,106 @@
     - embedding_model: OpenAI embedding model (default: text-embedding-3-small)
     - openai_file_id: OpenAI file ID if using their file storage
 
-  3. New Table: personality_embeddings
+  4. New Table: personality_embeddings
     - Stores text chunks and their vector embeddings
     - Linked to personalities for efficient retrieval
 */
 
--- Add file and RAG configuration fields to personalities table
-ALTER TABLE personalities 
-ADD COLUMN IF NOT EXISTS file_name text,
-ADD COLUMN IF NOT EXISTS file_instruction text,
-ADD COLUMN IF NOT EXISTS file_content text,
-ADD COLUMN IF NOT EXISTS uploaded_at timestamptz,
-ADD COLUMN IF NOT EXISTS chunk_size integer DEFAULT 800,
-ADD COLUMN IF NOT EXISTS top_chunks integer DEFAULT 3,
-ADD COLUMN IF NOT EXISTS embedding_model text DEFAULT 'text-embedding-3-small',
-ADD COLUMN IF NOT EXISTS openai_file_id text;
+-- 0) Расширения
+create extension if not exists pgcrypto;  -- для gen_random_uuid()
+create extension if not exists vector;    -- тип vector(...) для эмбеддингов
 
--- Create personality_embeddings table for vector storage
-CREATE TABLE IF NOT EXISTS personality_embeddings (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  personality_id uuid REFERENCES personalities(id) ON DELETE CASCADE,
-  chunk_text text NOT NULL,
-  chunk_index integer NOT NULL,
-  embedding vector(1536), -- OpenAI text-embedding-3-small produces 1536 dimensions
-  created_at timestamptz DEFAULT now()
+-- 1) personalities: добавим дополнительные RAG поля (базовые поля уже созданы в основной миграции)
+alter table public.personalities
+  add column if not exists file_name text,
+  add column if not exists file_content text,
+  add column if not exists uploaded_at timestamptz,
+  add column if not exists chunk_size integer default 800,
+  add column if not exists top_chunks integer default 3,
+  add column if not exists embedding_model text default 'text-embedding-3-small';
+
+-- 2) Таблица для эмбеддингов
+create table if not exists public.personality_embeddings (
+  id uuid primary key default gen_random_uuid(),
+  personality_id uuid not null references public.personalities(id) on delete cascade,
+  chunk_text text not null,
+  chunk_index integer not null,
+  embedding vector(1536) not null, -- text-embedding-3-small = 1536
+  created_at timestamptz not null default now()
 );
 
--- Create index for efficient similarity search
-CREATE INDEX IF NOT EXISTS personality_embeddings_personality_id_idx ON personality_embeddings(personality_id);
-CREATE INDEX IF NOT EXISTS personality_embeddings_embedding_idx ON personality_embeddings USING ivfflat (embedding vector_cosine_ops);
+-- 3) Индексы
+create index if not exists personality_embeddings_personality_id_idx
+  on public.personality_embeddings(personality_id);
 
--- RLS policies for personality_embeddings
-ALTER TABLE personality_embeddings ENABLE ROW LEVEL SECURITY;
+-- ivfflat требует pgvector; lists подберите позже по объёму (100 — старт)
+create index if not exists personality_embeddings_embedding_idx
+  on public.personality_embeddings using ivfflat (embedding vector_cosine_ops)
+  with (lists=100);
 
--- Users can only access embeddings for their own personalities
-CREATE POLICY "Users can view their own personality embeddings" ON personality_embeddings
-FOR SELECT USING (
-  EXISTS (
-    SELECT 1 FROM personalities 
-    WHERE personalities.id = personality_embeddings.personality_id 
-    AND personalities.user_id = auth.uid()
-  )
-);
+analyze public.personality_embeddings;
 
-CREATE POLICY "Users can insert embeddings for their own personalities" ON personality_embeddings
-FOR INSERT WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM personalities 
-    WHERE personalities.id = personality_embeddings.personality_id 
-    AND personalities.user_id = auth.uid()
-  )
-);
+-- 4) RLS на таблицу эмбеддингов
+alter table public.personality_embeddings enable row level security;
 
-CREATE POLICY "Users can update embeddings for their own personalities" ON personality_embeddings
-FOR UPDATE USING (
-  EXISTS (
-    SELECT 1 FROM personalities 
-    WHERE personalities.id = personality_embeddings.personality_id 
-    AND personalities.user_id = auth.uid()
-  )
-);
+-- Пересоздаём политики, если уже есть
+do $$
+begin
+  if exists (select 1 from pg_policies
+             where schemaname='public' and tablename='personality_embeddings'
+               and policyname='Users can view their own personality embeddings') then
+    execute 'drop policy "Users can view their own personality embeddings" on public.personality_embeddings';
+  end if;
+  if exists (select 1 from pg_policies
+             where schemaname='public' and tablename='personality_embeddings'
+               and policyname='Users can insert embeddings for their own personalities') then
+    execute 'drop policy "Users can insert embeddings for their own personalities" on public.personality_embeddings';
+  end if;
+  if exists (select 1 from pg_policies
+             where schemaname='public' and tablename='personality_embeddings'
+               and policyname='Users can update embeddings for their own personalities') then
+    execute 'drop policy "Users can update embeddings for their own personalities" on public.personality_embeddings';
+  end if;
+  if exists (select 1 from pg_policies
+             where schemaname='public' and tablename='personality_embeddings'
+               and policyname='Users can delete embeddings for their own personalities') then
+    execute 'drop policy "Users can delete embeddings for their own personalities" on public.personality_embeddings';
+  end if;
+end$$;
 
-CREATE POLICY "Users can delete embeddings for their own personalities" ON personality_embeddings
-FOR DELETE USING (
-  EXISTS (
-    SELECT 1 FROM personalities 
-    WHERE personalities.id = personality_embeddings.personality_id 
-    AND personalities.user_id = auth.uid()
-  )
-);
+create policy "Users can view their own personality embeddings"
+  on public.personality_embeddings for select to authenticated
+  using (exists (
+    select 1 from public.personalities p
+    where p.id = personality_embeddings.personality_id
+      and p.user_id = auth.uid()
+  ));
+
+create policy "Users can insert embeddings for their own personalities"
+  on public.personality_embeddings for insert to authenticated
+  with check (exists (
+    select 1 from public.personalities p
+    where p.id = personality_embeddings.personality_id
+      and p.user_id = auth.uid()
+  ));
+
+create policy "Users can update embeddings for their own personalities"
+  on public.personality_embeddings for update to authenticated
+  using (exists (
+    select 1 from public.personalities p
+    where p.id = personality_embeddings.personality_id
+      and p.user_id = auth.uid()
+  ))
+  with check (exists (
+    select 1 from public.personalities p
+    where p.id = personality_embeddings.personality_id
+      and p.user_id = auth.uid()
+  ));
+
+create policy "Users can delete embeddings for their own personalities"
+  on public.personality_embeddings for delete to authenticated
+  using (exists (
+    select 1 from public.personalities p
+    where p.id = personality_embeddings.personality_id
+      and p.user_id = auth.uid()
+  ));

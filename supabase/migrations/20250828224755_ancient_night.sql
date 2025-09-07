@@ -17,7 +17,7 @@
 -- Create messages table
 CREATE TABLE IF NOT EXISTS public.messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  chat_id text REFERENCES public.chats(id) ON DELETE CASCADE NOT NULL,
+  chat_id uuid REFERENCES public.chats(id) ON DELETE CASCADE NOT NULL,
   role text NOT NULL CHECK (role IN ('user', 'assistant')),
   content text NOT NULL,
   created_at timestamptz DEFAULT now() NOT NULL

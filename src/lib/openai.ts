@@ -105,6 +105,26 @@ export class OpenAIService {
     }
   }
 
+  async createChatCompletion(messages: ChatMessage[], settings: ModelSettings) {
+    if (!this.openai) {
+      throw new Error('OpenAI API key is not properly set or is invalid. Please check your API key in settings.');
+    }
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: settings.model,
+        messages,
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
+      });
+
+      return response;
+    } catch (error) {
+      console.error('OpenAI API error:', error);
+      throw error;
+    }
+  }
+
   async *streamChat(
     messages: ChatMessage[],
     settings: ModelSettings,

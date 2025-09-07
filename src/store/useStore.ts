@@ -189,16 +189,9 @@ export const useStore = create<AppState>((set, get) => ({
       return;
     }
     
-    const { user, currentChatId, settings, openaiService } = get();
+    const { user, currentChatId, settings, openaiService, messages, activePersonality } = get();
     if (!user || !settings?.openai_api_key) {
       console.error('Missing user or API key');
-      return;
-    }
-
-    // Check if we have active personality with assistant
-    const { activePersonality } = get();
-    if (!activePersonality?.openai_assistant_id) {
-      console.error('No active personality with Assistant ID found');
       return;
     }
 
@@ -210,31 +203,10 @@ export const useStore = create<AppState>((set, get) => ({
       set({ currentChatId: chatId });
     }
 
-    // Get current chat to check for thread ID
-    const { data: chatData } = await supabase
-      .from('chats')
-      .select('openai_thread_id')
-      .eq('id', chatId)
-      .single();
-
-    let threadId = chatData?.openai_thread_id;
-
     set({ isGenerating: true });
 
     try {
       openaiService.setApiKey(settings.openai_api_key.trim());
-
-      // Create thread if it doesn't exist
-      if (!threadId) {
-        const thread = await openaiService.createThread();
-        threadId = thread.id;
-        
-        // Update chat with thread ID
-        await supabase
-          .from('chats')
-          .update({ openai_thread_id: threadId })
-          .eq('id', chatId);
-      }
 
       // Add user message to UI
       const userMessage: Message = {
@@ -254,8 +226,21 @@ export const useStore = create<AppState>((set, get) => ({
         content
       });
 
-      // Add message to OpenAI thread
-      await openaiService.addMessage(threadId, content);
+      // Build conversation history for OpenAI
+      const conversationMessages = messages
+        .filter(m => m.chat_id === chatId)
+        .map(m => ({
+          role: m.role,
+          content: m.content
+        }));
+
+      // Add system message based on active personality
+      const systemMessage = activePersonality 
+        ? `You are ${activePersonality.name}. ${activePersonality.prompt}`
+        : 'You are a helpful assistant.';
+
+      // Add the new user message
+      conversationMessages.push({ role: 'user', content });
 
       // Create assistant message placeholder
       const assistantMessage: Message = {
@@ -268,124 +253,56 @@ export const useStore = create<AppState>((set, get) => ({
 
       set(state => ({ messages: [...state.messages, assistantMessage] }));
 
-      // Run the assistant
-      const run = await openaiService.runAssistant(threadId, activePersonality.openai_assistant_id);
+      // Call OpenAI Chat Completion API
+      const response = await openaiService.createChatCompletion([
+        { role: 'system', content: systemMessage },
+        ...conversationMessages
+      ], {
+        model: settings.model || 'gpt-4o',
+        temperature: settings.temperature || 0.7,
+        max_tokens: settings.max_tokens || 2000
+      });
 
-      // Poll for completion (simple polling - in production you might want to use webhooks)
-      let runStatus = run.status;
-        let attempts = 0;
-      const maxAttempts = 30; // 30 seconds timeout
-      let lastRunCheck: any = { status: run.status, usage: null, run: run };
-      let lastLoggedStatus = run.status;
-      
-      console.log('Run status:', lastLoggedStatus);
-      
-      while ((runStatus === 'queued' || runStatus === 'in_progress') && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-        lastRunCheck = await openaiService.checkRun(threadId, run.id);
-        runStatus = lastRunCheck.status;
-        attempts++;
-        
-        // Log only status changes
-        if (runStatus !== lastLoggedStatus) {
-          console.log('Run status:', runStatus);
-          lastLoggedStatus = runStatus;
-        }
-        
-        // Check for requires_action or errors
-        if (lastRunCheck.run?.status === 'requires_action') {
-          console.warn('Requires action:', JSON.stringify(lastRunCheck.run.required_action, null, 2));
-          break;
-        }
-        if (lastRunCheck.run?.last_error) {
-          console.error('Run error:', lastRunCheck.run.last_error);
-          break;
-        }
-      }
-      
-      if (attempts >= maxAttempts) {
-        console.error('Run timeout after 30 seconds');
-        throw new Error('Assistant run timeout');
+      const assistantResponse = response.choices[0]?.message?.content || '';
+      const tokenUsage = response.usage;
+
+      if (tokenUsage) {
+        console.log('Tokens:', tokenUsage.total_tokens, '(prompt:', tokenUsage.prompt_tokens, 'completion:', tokenUsage.completion_tokens + ')');
+        set(state => ({ totalTokens: state.totalTokens + tokenUsage.total_tokens }));
       }
 
-      if (runStatus === 'completed') {
-        // Use token usage from the last run check (we already have it from polling)
-        const tokenUsage = lastRunCheck?.usage;
-        
-        if (tokenUsage) {
-          console.log('Tokens:', tokenUsage.total_tokens, '(prompt:', tokenUsage.prompt_tokens, 'completion:', tokenUsage.completion_tokens + ')');
-          // Update total tokens in state
-          set(state => ({ totalTokens: state.totalTokens + tokenUsage.total_tokens }));
-        }
+      // Update the assistant message in UI
+      set(state => ({
+        messages: state.messages.map(msg =>
+          msg.id === assistantMessage.id
+            ? { ...msg, content: assistantResponse }
+            : msg
+        )
+      }));
 
-        // Get the latest messages from the thread
-        const threadMessages = await openaiService.getThreadMessages(threadId);
-        const latestAssistantMessage = threadMessages
-          .filter(msg => msg.role === 'assistant')
-          .pop();
-        
-        console.log('Got assistant message:', latestAssistantMessage ? 'YES' : 'NO');
-        
-        if (latestAssistantMessage) {
-          console.log('Updating message with content length:', latestAssistantMessage.content.length);
-          
-          // Update the assistant message in UI
-          set(state => ({
-            messages: state.messages.map(msg =>
-              msg.id === assistantMessage.id
-                ? { ...msg, content: latestAssistantMessage.content, token_usage: tokenUsage }
-                : msg
-            )
-          }));
+      // Save assistant message to DB
+      const { error: saveError } = await supabase.from('messages').insert({
+        chat_id: chatId,
+        role: 'assistant',
+        content: assistantResponse
+      });
 
-          console.log('UI updated, saving to DB...');
+      if (saveError) {
+        console.error('Error saving to DB:', saveError);
+      }
 
-          // Save assistant message to DB
-          const { error: saveError } = await supabase.from('messages').insert({
-            chat_id: chatId,
-            role: 'assistant',
-            content: latestAssistantMessage.content
-          });
-
-          if (saveError) {
-            console.error('Error saving to DB:', saveError);
-          } else {
-            console.log('Message saved to DB successfully');
-          }
-
-          // Update chat title if it's the first message
-          const currentMessages = get().messages;
-          if (currentMessages.length === 2) {
-            const title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
-            await get().updateChatTitle(chatId, title);
-          }
-
-          // Update chat with token usage if available
-          if (tokenUsage) {
-            set(state => ({
-              chats: state.chats.map(chat =>
-                chat.id === chatId
-                  ? { ...chat, token_usage: tokenUsage }
-                  : chat
-              )
-            }));
-          }
-        }
-      } else {
-        console.error('Assistant run failed with status:', runStatus);
-        // Remove the empty assistant message on error
-        set(state => ({
-          messages: state.messages.filter(msg => msg.id !== assistantMessage?.id)
-        }));
+      // Update chat title if it's the first message
+      const currentMessages = get().messages;
+      if (currentMessages.length === 2) {
+        const title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
+        await get().updateChatTitle(chatId, title);
       }
 
     } catch (error) {
-      console.error('Error with Assistants API:', error);
-      // Remove the empty assistant message on error if it exists
+      console.error('Error with OpenAI API:', error);
+      // Remove the empty assistant message on error
       set(state => ({
-        messages: state.messages.filter(msg => 
-          msg.role === 'assistant' && msg.content === '' ? false : true
-        )
+        messages: state.messages.filter(msg => msg.id !== assistantMessage.id)
       }));
     } finally {
       set({ isGenerating: false });

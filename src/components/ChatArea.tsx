@@ -9,6 +9,7 @@ import { Send, Square, Bot, User, Zap, Brain, Copy, Check } from 'lucide-react';
 export const ChatArea: React.FC = () => {
   const {
     messages,
+    personalities,
     activePersonality,
     totalTokens,
     isGenerating,
@@ -16,7 +17,8 @@ export const ChatArea: React.FC = () => {
     settings,
     currentChatId,
     togglePersonalities,
-    updatePersonality
+    updatePersonality,
+    setActivePersonality
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -108,9 +110,24 @@ export const ChatArea: React.FC = () => {
       <div className="border-b border-gray-200 dark:border-gray-700 p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {activePersonality ? activePersonality.name : 'Default Assistant'}
-            </h2>
+            {/* Personality Selector */}
+            <select
+              value={activePersonality?.id || ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setActivePersonality(e.target.value);
+                }
+              }}
+              className="text-lg font-semibold bg-transparent border-none focus:ring-0 text-gray-900 dark:text-white cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1"
+            >
+              <option value="">Default Assistant</option>
+              {personalities.map((personality) => (
+                <option key={personality.id} value={personality.id}>
+                  {personality.name}
+                </option>
+              ))}
+            </select>
+            
             {activePersonality && (
               <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                 <input

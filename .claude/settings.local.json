@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase\\migrations/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase\\migrations/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase\\migrations/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\src/**)",
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\src/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

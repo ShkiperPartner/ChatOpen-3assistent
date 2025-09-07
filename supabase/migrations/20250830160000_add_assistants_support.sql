@@ -12,9 +12,8 @@
     - Will remove them in a later migration
 */
 
--- Add OpenAI Assistant ID to personalities
+-- Add OpenAI file ID to personalities (openai_assistant_id уже добавлен в базовой миграции)
 ALTER TABLE personalities 
-ADD COLUMN IF NOT EXISTS openai_assistant_id text,
 ADD COLUMN IF NOT EXISTS openai_file_id text; -- For the uploaded file in OpenAI
 
 -- Add OpenAI Thread ID to chats 
