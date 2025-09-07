@@ -67,6 +67,10 @@ interface AppState {
   uploadPersonalityFile: (personalityId: string, file: File) => Promise<PersonalityFile>;
   deletePersonalityFile: (personalityId: string, fileId: string) => Promise<void>;
   setIsGenerating: (generating: boolean) => void;
+  
+  // Helper methods (private-like)
+  _handleChatCompletionsAPI: (chatId: string, content: string, activePersonality: Personality | null, messages: Message[], settings: UserSettings) => Promise<{ response: string; usage: any }>;
+  _handleAssistantsAPIMessage: (chatId: string, content: string, personality: Personality) => Promise<string>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -226,21 +230,10 @@ export const useStore = create<AppState>((set, get) => ({
         content
       });
 
-      // Build conversation history for OpenAI
-      const conversationMessages = messages
-        .filter(m => m.chat_id === chatId)
-        .map(m => ({
-          role: m.role,
-          content: m.content
-        }));
-
-      // Add system message based on active personality
-      const systemMessage = activePersonality 
-        ? `You are ${activePersonality.name}. ${activePersonality.prompt}`
-        : 'You are a helpful assistant.';
-
-      // Add the new user message
-      conversationMessages.push({ role: 'user', content });
+      // Check if we should use Assistants API (when personality has files and OpenAI assistant)
+      const shouldUseAssistantsAPI = activePersonality?.files && 
+        activePersonality.files.length > 0 && 
+        activePersonality.openai_assistant_id;
 
       // Create assistant message placeholder
       const assistantMessage: Message = {
@@ -253,18 +246,20 @@ export const useStore = create<AppState>((set, get) => ({
 
       set(state => ({ messages: [...state.messages, assistantMessage] }));
 
-      // Call OpenAI Chat Completion API
-      const response = await openaiService.createChatCompletion([
-        { role: 'system', content: systemMessage },
-        ...conversationMessages
-      ], {
-        model: settings.model || 'gpt-4o',
-        temperature: settings.temperature || 0.7,
-        max_tokens: settings.max_tokens || 2000
-      });
+      let assistantResponse = '';
+      let tokenUsage = null;
 
-      const assistantResponse = response.choices[0]?.message?.content || '';
-      const tokenUsage = response.usage;
+      if (shouldUseAssistantsAPI) {
+        console.log('Using Assistants API for chat with files');
+        // Use Assistants API for personalities with files
+        assistantResponse = await get()._handleAssistantsAPIMessage(chatId, content, activePersonality!);
+      } else {
+        console.log('Using Chat Completions API');
+        // Use regular Chat Completions API
+        const result = await get()._handleChatCompletionsAPI(chatId, content, activePersonality, messages, settings);
+        assistantResponse = result.response;
+        tokenUsage = result.usage;
+      }
 
       if (tokenUsage) {
         console.log('Tokens:', tokenUsage.total_tokens, '(prompt:', tokenUsage.prompt_tokens, 'completion:', tokenUsage.completion_tokens + ')');
@@ -672,6 +667,118 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  // Helper method for Chat Completions API
+  _handleChatCompletionsAPI: async (chatId: string, content: string, activePersonality: Personality | null, messages: Message[], settings: UserSettings) => {
+    const { openaiService } = get();
+
+    // Build conversation history for OpenAI
+    const conversationMessages = messages
+      .filter(m => m.chat_id === chatId)
+      .map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+    // Add system message based on active personality
+    const systemMessage = activePersonality 
+      ? `You are ${activePersonality.name}. ${activePersonality.prompt}`
+      : 'You are a helpful assistant.';
+
+    // Add the new user message
+    conversationMessages.push({ role: 'user', content });
+
+    // Call OpenAI Chat Completion API
+    const response = await openaiService.createChatCompletion([
+      { role: 'system', content: systemMessage },
+      ...conversationMessages
+    ], {
+      model: settings.model || 'gpt-4o',
+      temperature: settings.temperature || 0.7,
+      max_tokens: settings.max_tokens || 2000
+    });
+
+    const assistantResponse = response.choices[0]?.message?.content || '';
+    const tokenUsage = response.usage;
+
+    return {
+      response: assistantResponse,
+      usage: tokenUsage
+    };
+  },
+
+  // Helper method for Assistants API
+  _handleAssistantsAPIMessage: async (chatId: string, content: string, personality: Personality): Promise<string> => {
+    const { openaiService } = get();
+
+    try {
+      // Get current chat to check for existing thread
+      const { data: chatData } = await supabase
+        .from('chats')
+        .select('openai_thread_id')
+        .eq('id', chatId)
+        .single();
+
+      let threadId = chatData?.openai_thread_id;
+
+      // Create thread if it doesn't exist
+      if (!threadId) {
+        console.log('Creating new OpenAI thread for chat:', chatId);
+        const threadResponse = await openaiService.createThread();
+        threadId = threadResponse.id;
+
+        // Save thread ID to chat
+        await supabase
+          .from('chats')
+          .update({ openai_thread_id: threadId })
+          .eq('id', chatId);
+      }
+
+      // Add message to thread
+      await openaiService.addMessage(threadId, content);
+
+      // Run the assistant
+      const runResponse = await openaiService.runAssistant(threadId, personality.openai_assistant_id!);
+      
+      // Poll for completion with optimized check
+      let runStatus = runResponse.status;
+      let pollAttempts = 0;
+      const maxPollAttempts = 30; // Maximum 30 attempts (30 seconds)
+      
+      while (runStatus === 'queued' || runStatus === 'in_progress') {
+        if (pollAttempts >= maxPollAttempts) {
+          throw new Error('Assistant run timeout - taking too long to respond');
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        const statusCheck = await openaiService.checkRun(threadId, runResponse.id);
+        runStatus = statusCheck.status;
+        pollAttempts++;
+        
+        console.log(`Run status: ${runStatus} (attempt ${pollAttempts})`);
+      }
+
+      if (runStatus === 'completed') {
+        // Get the assistant's response from thread messages
+        const threadMessages = await openaiService.getThreadMessages(threadId);
+        const assistantMessages = threadMessages.filter(msg => msg.role === 'assistant');
+        
+        if (assistantMessages.length > 0) {
+          // Return the latest assistant message
+          return assistantMessages[assistantMessages.length - 1].content;
+        } else {
+          throw new Error('No assistant response found in thread');
+        }
+      } else if (runStatus === 'failed') {
+        throw new Error('Assistant run failed');
+      } else {
+        throw new Error(`Assistant run ended with unexpected status: ${runStatus}`);
+      }
+
+    } catch (error) {
+      console.error('Error in Assistants API:', error);
+      throw error;
+    }
+  },
 
   setIsGenerating: (generating) => set({ isGenerating: generating })
 }));
