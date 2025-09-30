@@ -216,7 +216,7 @@ File Selection → uploadPersonalityFile() →
 - **TypeScript строгий** - no any (кроме исключений)
 - **Именование:** camelCase для переменных, PascalCase для компонентов
 
-### Database Patterns  
+### Database Patterns
 - **UUID** для всех Primary Keys
 - **JSONB** для сложных структур данных
 - **RLS** для безопасности на уровне строк
@@ -228,11 +228,197 @@ File Selection → uploadPersonalityFile() →
 - **Консольное логирование** для отладки
 - **Fallback состояния** в UI
 
-### Performance Optimizations  
+### Performance Optimizations
 - **Оптимизированный polling** OpenAI API
 - **Zustand selective subscriptions**
 - **GIN индексы** для JSONB queries
 - **Минимальные re-renders** в React
+
+---
+
+## 🚀 Claude 4.5 Architecture Recommendations
+
+### 1. Type Safety Improvements
+
+**Текущая оценка:**
+- ✅ Хорошо: Database interface в supabase.ts
+- ⚠️ Улучшить: JSONB типизация может быть строже
+- ⚠️ Улучшить: Union types для статусов файлов
+
+**Рекомендации:**
+```typescript
+// Строгая типизация для JSONB:
+type FileStatus = 'ready' | 'processing' | 'error' | 'deleted';
+
+interface PersonalityFile {
+  openai_file_id: string;
+  file_name: string;
+  file_size: number;
+  uploaded_at: string; // ISO timestamp
+  status: FileStatus;
+  error_message?: string; // опционально при status='error'
+}
+
+// Type guards для безопасности:
+function isValidPersonalityFile(obj: unknown): obj is PersonalityFile {
+  return (
+    typeof obj === 'object' && obj !== null &&
+    'openai_file_id' in obj && typeof obj.openai_file_id === 'string' &&
+    'file_name' in obj && typeof obj.file_name === 'string' &&
+    'status' in obj && ['ready', 'processing', 'error', 'deleted'].includes(obj.status)
+  );
+}
+```
+
+### 2. React Performance Patterns
+
+**Анализ компонентов:**
+```typescript
+// ❌ Избегать (лишние re-renders):
+const ChatArea = () => {
+  const store = useStore(); // ре-рендер при ЛЮБОМ изменении
+  return <div>{store.messages.map(...)}</div>;
+};
+
+// ✅ Оптимально (selective subscription):
+const ChatArea = () => {
+  const messages = useStore(state => state.messages);
+  const sendMessage = useStore(state => state.sendMessage);
+  return <div>{messages.map(...)}</div>;
+};
+
+// ✅ Еще лучше (с memo для стабильных селекторов):
+const selectMessages = (state: AppState) => state.messages;
+const ChatArea = () => {
+  const messages = useStore(selectMessages);
+  // ...
+};
+```
+
+**Рекомендации для компонентов:**
+- `Personalities.tsx` - проверить subscriptions к personalities
+- `ChatArea.tsx` - проверить subscriptions к messages
+- `FileDropZone.tsx` - мемоизировать callback'и
+
+### 3. Database Query Optimization
+
+**Текущие запросы:**
+```typescript
+// Можно оптимизировать:
+const { data } = await supabase
+  .from('personalities')
+  .select('*'); // ← выбираем всё
+
+// Лучше (выбираем только нужные поля):
+const { data } = await supabase
+  .from('personalities')
+  .select('id, name, base_prompt, files');
+```
+
+**Рекомендации:**
+- Использовать `.select()` с конкретными полями
+- Добавить индексы для частых WHERE условий
+- Рассмотреть материализованные views для аналитики
+
+### 4. OpenAI API Best Practices
+
+**Текущая реализация:**
+- ✅ Хорошо: транслитерация имен
+- ✅ Хорошо: оптимизированный polling
+- ⚠️ Улучшить: error retry logic
+
+**Рекомендации:**
+```typescript
+// Добавить exponential backoff для retry:
+async function runAssistantWithRetry(
+  threadId: string,
+  assistantId: string,
+  maxRetries = 3
+): Promise<Run> {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await this.runAssistant(threadId, assistantId);
+    } catch (error) {
+      attempt++;
+      if (attempt >= maxRetries) throw error;
+
+      const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+```
+
+### 5. File Upload Architecture
+
+**Текущая реализация (v1.3):**
+- ✅ Файлы в OpenAI Files API
+- ✅ Метаданные в JSONB
+- ⚠️ Улучшить: chunked upload для больших файлов
+
+**Рекомендации:**
+```typescript
+// Для файлов > 10MB использовать chunked upload:
+async uploadLargeFile(file: File, onProgress?: (percent: number) => void) {
+  if (file.size > 10 * 1024 * 1024) {
+    return this.uploadFileChunked(file, onProgress);
+  }
+  return this.uploadFileToOpenAI(file);
+}
+```
+
+### 6. Security & RLS Patterns
+
+**Проверить:**
+- RLS политики для всех CRUD операций
+- API key хранение (localStorage vs sessionStorage)
+- Sanitization пользовательского ввода
+
+**Рекомендации:**
+```sql
+-- RLS Policy pattern для personalities:
+CREATE POLICY "Users can only access their own personalities"
+ON personalities FOR ALL
+USING (auth.uid() = user_id);
+
+-- Для файлов проверять constraint:
+ALTER TABLE personalities
+ADD CONSTRAINT check_files_array_length
+CHECK (jsonb_array_length(files) <= 20);
+```
+
+### 7. Error Boundaries & Resilience
+
+**Добавить:**
+```typescript
+// React Error Boundary для компонентов:
+class ErrorBoundary extends React.Component {
+  componentDidCatch(error, errorInfo) {
+    // Log to analytics
+    console.error('Component error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <FallbackUI />;
+    }
+    return this.props.children;
+  }
+}
+```
+
+### 8. Testing Strategy
+
+**Приоритеты тестирования:**
+1. **Unit tests** - OpenAI service методы
+2. **Integration tests** - File upload flow
+3. **E2E tests** - Критические user flows
+
+**Инструменты:**
+- Vitest для unit тестов
+- React Testing Library для компонентов
+- Playwright для E2E (опционально)
 
 ---
 
@@ -280,5 +466,24 @@ Planning → Implementation → Testing → Documentation → Deployment
 
 ---
 
-*Документ поддерживается в актуальном состоянии для эффективной разработки*  
-*Последнее обновление: 2025-01-31*
+## 🎯 Priority Optimizations Roadmap
+
+### Quick Wins (можно сделать быстро)
+1. ✅ **Selective subscriptions в компонентах** (1-2 часа)
+2. ✅ **Type guards для JSONB** (1 час)
+3. ✅ **Database query optimization** (.select() с полями) (1 час)
+
+### Medium Priority (следующие спринты)
+1. 🎯 **Error retry logic** с exponential backoff (2-3 часа)
+2. 🎯 **Error Boundaries** для компонентов (2-3 часа)
+3. 🎯 **Unit tests** для OpenAI service (4-5 часов)
+
+### Long Term (планирование)
+1. 📋 **Chunked upload** для больших файлов
+2. 📋 **E2E testing** с Playwright
+3. 📋 **Performance monitoring** и analytics
+
+---
+
+*Документ поддерживается в актуальном состоянии для эффективной разработки*
+*Последнее обновление: 2025-01-31 (добавлены Claude 4.5 рекомендации)*
