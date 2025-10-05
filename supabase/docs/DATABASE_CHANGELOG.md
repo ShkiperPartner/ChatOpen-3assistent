@@ -303,10 +303,317 @@ node apply-assistants-migration.mjs
 
 ---
 
+## 🚀 MaaS (Memory as a Service) Таблицы
+
+**Дата добавления:** 2025-02-05
+**Статус:** ✅ РЕАЛИЗОВАНО И ПРОТЕСТИРОВАНО
+**Проект:** Отдельный микросервис в `maas/`
+
+### Обзор
+
+Создано **9 таблиц** для системы Memory as a Service - интеллектуальной памяти для AI ассистентов.
+
+**Состав:**
+- ✋ **2 таблицы** созданы вручную (`projects`, `chats`)
+- 🤖 **7 таблиц** из SQL миграции (`facts`, `thread_summaries`, `decisions`, `links`, `sources`, `maas_metrics`, `snapshot_cache`)
+
+### Таблицы созданные вручную
+
+#### 0. `projects` - Проекты MaaS ✋ ВРУЧНУЮ
+```sql
+projects {
+  id: UUID PRIMARY KEY
+  user_id: TEXT NOT NULL
+  name: TEXT NOT NULL
+  mission: TEXT
+  goals: TEXT[]
+  is_default: BOOLEAN DEFAULT false
+  status: TEXT DEFAULT 'active'
+  created_at: TIMESTAMPTZ DEFAULT NOW()
+  updated_at: TIMESTAMPTZ DEFAULT NOW()
+}
+```
+
+**Назначение:** Центральная таблица для организации MaaS памяти по проектам.
+**Статус:** ✋ Создана вручную в Supabase Dashboard
+**Связи:** Все остальные MaaS таблицы ссылаются на `projects.id`
+
+#### 0.5 `chats` - Чаты ✋ ВРУЧНУЮ
+```sql
+chats {
+  id: UUID PRIMARY KEY
+  -- структура определяется основным приложением
+}
+```
+
+**Назначение:** Хранение чатов (структура из основного приложения)
+**Статус:** ✋ Создана вручную
+
+### Таблицы из миграции MaaS
+
+#### 1. `facts` - Факты и контекстная информация
+```sql
+facts {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id) ON DELETE CASCADE
+  session_id: TEXT
+  user_id: TEXT
+
+  subject: TEXT NOT NULL                -- Тема факта
+  value: JSONB NOT NULL                 -- Значение (гибкая структура)
+  level: TEXT DEFAULT 'fact'            -- fact | insight | pattern | hypothesis
+  source_type: TEXT DEFAULT 'inferred'  -- user_stated | inferred | observed | derived
+
+  confidence: NUMERIC(3,2) DEFAULT 1.0  -- 0.0 - 1.0
+  importance: INTEGER DEFAULT 5          -- 1 - 10
+
+  tags: TEXT[] DEFAULT '{}'
+  metadata: JSONB DEFAULT '{}'
+  is_active: BOOLEAN DEFAULT true
+
+  created_at: TIMESTAMPTZ DEFAULT NOW()
+  updated_at: TIMESTAMPTZ DEFAULT NOW()
+}
+
+-- Индексы: project_id, session_id, user_id, subject, level, source_type, tags (GIN), value (GIN)
+```
+
+#### 2. `thread_summaries` - Саммари разговоров
+```sql
+thread_summaries {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+  session_id: TEXT
+  thread_id: TEXT
+
+  summary_text: TEXT NOT NULL
+  summary_type: TEXT DEFAULT 'auto'  -- auto | manual | periodic
+
+  message_count: INTEGER DEFAULT 0
+  token_count: INTEGER DEFAULT 0
+
+  first_message_at: TIMESTAMPTZ
+  last_message_at: TIMESTAMPTZ
+
+  keywords: TEXT[] DEFAULT '{}'
+  topics: JSONB DEFAULT '[]'
+  metadata: JSONB DEFAULT '{}'
+
+  created_at: TIMESTAMPTZ
+  updated_at: TIMESTAMPTZ
+}
+
+-- Индексы: project_id, session_id, thread_id, keywords (GIN), topics (GIN)
+```
+
+#### 3. `decisions` - Решения из разговоров
+```sql
+decisions {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+  session_id: TEXT
+
+  decision_text: TEXT NOT NULL
+  decision_type: TEXT NOT NULL  -- action | preference | plan | goal | constraint | other
+
+  status: TEXT DEFAULT 'pending'  -- pending | in_progress | completed | cancelled | deferred
+  outcome: TEXT
+  priority: TEXT DEFAULT 'medium'  -- low | medium | high | urgent
+
+  due_date: TIMESTAMPTZ
+  completed_at: TIMESTAMPTZ
+
+  tags: TEXT[]
+  metadata: JSONB
+
+  created_at: TIMESTAMPTZ
+  updated_at: TIMESTAMPTZ
+}
+
+-- Индексы: project_id, session_id, decision_type, status, priority, tags (GIN)
+```
+
+#### 4. `links` - Связи между сущностями
+```sql
+links {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+
+  source_type: TEXT NOT NULL  -- fact | decision | summary | message | source | chat | other
+  source_id: UUID NOT NULL
+
+  target_type: TEXT NOT NULL  -- fact | decision | summary | message | source | chat | other
+  target_id: UUID NOT NULL
+
+  link_type: TEXT NOT NULL  -- related_to | derived_from | supports | contradicts | references | depends_on | other
+
+  strength: NUMERIC(3,2) DEFAULT 1.0  -- 0.0 - 1.0
+  metadata: JSONB
+
+  created_at: TIMESTAMPTZ
+}
+
+-- Индексы: project_id, (source_type, source_id), (target_type, target_id), link_type
+```
+
+#### 5. `sources` - Внешние источники
+```sql
+sources {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+
+  source_type: TEXT NOT NULL  -- web | document | api | database | manual | other
+
+  source_url: TEXT
+  source_title: TEXT
+  source_content: TEXT
+  source_excerpt: TEXT
+
+  author: TEXT
+  published_at: TIMESTAMPTZ
+  accessed_at: TIMESTAMPTZ DEFAULT NOW()
+
+  credibility_score: NUMERIC(3,2) DEFAULT 0.5  -- 0.0 - 1.0
+
+  tags: TEXT[]
+  metadata: JSONB
+
+  created_at: TIMESTAMPTZ
+  updated_at: TIMESTAMPTZ
+}
+
+-- Индексы: project_id, source_type, source_url, tags (GIN), metadata (GIN)
+```
+
+#### 6. `maas_metrics` - Метрики использования
+```sql
+maas_metrics {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+
+  metric_type: TEXT NOT NULL  -- fact_created | fact_updated | decision_made | summary_generated | ...
+
+  metric_value: NUMERIC
+  metric_unit: TEXT
+
+  entity_type: TEXT
+  entity_id: UUID
+
+  metadata: JSONB
+
+  recorded_at: TIMESTAMPTZ DEFAULT NOW()
+}
+
+-- Индексы: project_id, metric_type, recorded_at, (entity_type, entity_id)
+```
+
+#### 7. `snapshot_cache` - Кеш снапшотов
+```sql
+snapshot_cache {
+  id: UUID PRIMARY KEY
+  project_id: UUID → projects(id)
+  session_id: TEXT
+
+  snapshot_type: TEXT NOT NULL  -- full | incremental | summary | context | other
+
+  snapshot_data: JSONB NOT NULL
+
+  version: INTEGER DEFAULT 1
+  size_bytes: INTEGER
+
+  expires_at: TIMESTAMPTZ
+  last_accessed_at: TIMESTAMPTZ DEFAULT NOW()
+  access_count: INTEGER DEFAULT 0
+
+  metadata: JSONB
+
+  created_at: TIMESTAMPTZ
+}
+
+-- Индексы: project_id, session_id, snapshot_type, expires_at, snapshot_data (GIN)
+```
+
+### Вспомогательные функции
+
+#### `cleanup_expired_snapshots()`
+Удаляет истекшие снапшоты из кеша.
+
+#### `update_updated_at_column()`
+Триггер-функция для автоматического обновления поля `updated_at`.
+
+### Миграция
+
+**Файл:** `maas/migrations/20250205000001_add_maas_tables_no_rls.sql`
+**Применена:** 2025-02-05
+**Метод:** Автоматический скрипт `maas/scripts/apply-step-by-step.mjs`
+
+**Особенности:**
+- RLS отключен для учебного проекта (для продакшена включить!)
+- Все таблицы связаны с `projects` через `project_id`
+- Используются GIN индексы для JSONB и массивов
+- CHECK constraints для валидации данных
+- Триггеры для `updated_at`
+
+### Тестовые данные
+
+**Создано:** 2025-02-05
+**Скрипт:** `maas/scripts/create-test-data.mjs`
+
+**Статистика из реальной БД (проверено):**
+- ✅ 3 проекта (projects)
+- ✅ 2 факта (MaaS Components, User Learning Goal)
+- ✅ 1 thread summary (learning-session-1)
+- ✅ 1 решение (использовать Supabase)
+- ✅ 2 связи (fact→summary, decision→fact)
+- ✅ 1 источник (Claude Code Documentation)
+- ✅ 2 метрики (fact_created, summary_generated)
+- ✅ 1 снапшот контекста
+
+**Основной тестовый проект ID:** d16fd186-b648-42e2-bcb8-c61d32ded6d2
+
+### Документация MaaS
+
+**Расположение:** `maas/`
+
+- `README.md` - Обзор структуры
+- `APPLY_MIGRATION.md` - Инструкция по применению
+- `STEP_4_QUERIES.sql` - SQL запросы для изучения
+
+### Следующие шаги MaaS
+
+- [ ] Интеграция с n8n workflow
+- [ ] API endpoints для работы с памятью
+- [ ] Векторный поиск по фактам
+- [ ] Автоматическое извлечение фактов из разговоров
+- [ ] Dashboard для визуализации связей
+
+---
+
 ## 📊 Финальный статус структуры БД
 
-**Дата:** 2025-01-31  
-**Статус:** ✅ СТАБИЛЬНАЯ И ОЧИЩЕННАЯ
+**Дата:** 2025-02-05
+**Статус:** ✅ РАСШИРЕНА - ДОБАВЛЕНЫ 9 MAAS ТАБЛИЦ
+
+### Полный состав таблиц в БД
+
+**Основное приложение (4 таблицы):**
+- `users` - пользователи
+- `personalities` - AI ассистенты
+- `chats` - чаты (также используется в MaaS)
+- `messages` - сообщения
+
+**MaaS микросервис (9 таблиц):**
+- ✋ `projects` - проекты (создана вручную)
+- ✋ `chats` - чаты (создана вручную, общая с основным приложением)
+- 🤖 `facts` - факты
+- 🤖 `thread_summaries` - саммари тредов
+- 🤖 `decisions` - решения
+- 🤖 `links` - связи между сущностями
+- 🤖 `sources` - внешние источники
+- 🤖 `maas_metrics` - метрики
+- 🤖 `snapshot_cache` - кеш снапшотов
+
+**ИТОГО:** 12 таблиц (3 основные + 1 общая + 8 MaaS)
 
 ### ✅ Применено
 - [x] Добавлено JSONB поле `files` для множественных файлов
@@ -327,5 +634,5 @@ node apply-assistants-migration.mjs
 
 ---
 
-*Ведется разработчиком проекта для отслеживания всех изменений схемы БД*  
-*Последнее обновление: 2025-01-31 - Структура очищена и готова к файловому функционалу*
+*Ведется разработчиком проекта для отслеживания всех изменений схемы БД*
+*Последнее обновление: 2025-02-05 - Добавлены 9 MaaS таблиц (2 вручную + 7 миграция), создан учебный проект с тестовыми данными. Проверено через full-check.mjs - все 12 таблиц в БД.*
