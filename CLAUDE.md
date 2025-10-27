@@ -1,8 +1,21 @@
 # Claude Code Working Instructions
 
-**Проект:** ChatOpenAI Integration Assistant  
-**Цель:** Мета-инструкции для эффективной работы с проектом  
+**Проект:** ChatOpenAI Integration Assistant
+**Цель:** Мета-инструкции для эффективной работы с проектом
 **Дата создания:** 2025-01-31
+
+---
+
+## 📝 Migration Notice
+
+> This project was migrated to Claude Code Starter framework v1.2.4 on 2025-10-27
+
+**Archive location:** `archive/`
+**Migration report:** `archive/MIGRATION_REPORT.md`
+**Framework version:** v1.2.4
+
+**Single source of truth is now Init/ folder.**
+Legacy documentation archived for reference only.
 
 ---
 

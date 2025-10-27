@@ -10,7 +10,16 @@
       "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase\\migrations/**)",
       "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\supabase\\migrations/**)",
       "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\src/**)",
-      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\src/**)"
+      "Read(/C:\\Users\\Ruslan\\Documents\\ПРОЕКТ\\Гитхаб+SVcode\\Кролл репо\\ChatOpenAIIntegration-3assistent\\src/**)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(npx supabase:*)",
+      "Bash(bash:*)",
+      "Bash(rm:*)",
+      "Bash(find:*)",
+      "Bash(xargs:*)",
+      "Bash(test:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
