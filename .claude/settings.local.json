@@ -19,7 +19,9 @@
       "Bash(find:*)",
       "Bash(xargs:*)",
       "Bash(test:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(node scripts/test-memory-service.mjs:*)"
     ],
     "deny": [],
     "ask": []
