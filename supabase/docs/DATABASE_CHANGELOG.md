@@ -36,6 +36,28 @@
 
 ## 🚀 Recent Changes (February 2025)
 
+### 2025-02-29 - document_chunks Schema Fix ✅
+
+**Migration:** `20250229000003_add_document_chunks_columns.sql`
+
+**Problem:** TypeScript interface had 5 columns not present in DB schema
+
+**Added columns:**
+- `user_id` (UUID) - owner of document (NULL = public/system)
+- `is_public` (BOOLEAN) - public/private access control
+- `project_id` (UUID) - link to MaaS projects
+- `file_size` (BIGINT) - source file size in bytes
+- `source_url` (TEXT) - URL of source document
+
+**Indexes created:**
+- idx_document_chunks_user_id
+- idx_document_chunks_is_public (partial: WHERE is_public = true)
+- idx_document_chunks_project_id
+
+**Result:** Memory Service API tests now pass ✅
+
+---
+
 ### 2025-02-29 - Unified Memory System Complete ✅
 
 **Migration:** `20250229000002_migrate_maas_tables.sql`
