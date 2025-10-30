@@ -184,23 +184,63 @@
 
 ## 📡 Data Flow & Integration Patterns
 
-### 1. [User Flow #1 - например "User Login"]
+### 1. Memory Service API Flow - Unified Memory Search
 ```
-User Action →
-├── Step 1
-├── Step 2
-├── Step 3
-└── Final Result
+User Query ("How to use Supabase?") →
+├── Memory Service API
+│   ├── OpenAI Embeddings (векторизация query)
+│   ├── Parallel Search (3 источника)
+│   │   ├── 📚 БИБЛИОТЕКА (document_chunks)
+│   │   │   └── Векторный поиск → Top 5 chunks
+│   │   ├── 💼 РАБОЧИЙ СТОЛ (personality_embeddings)
+│   │   │   └── Векторный поиск → Top 3 embeddings
+│   │   └── 📓 ДНЕВНИК (MaaS tables)
+│   │       ├── facts → Релевантные факты
+│   │       ├── thread_summaries → Саммари разговоров
+│   │       └── decisions → Решения пользователя
+│   └── Aggregation + Ranking
+└── Unified Context → AI Assistant
 ```
 
 **Detailed flow:**
-1. [Шаг 1 детально]
-2. [Шаг 2 детально]
-3. [Шаг 3 детально]
+1. Пользователь задаёт вопрос в чате
+2. MemoryService.searchMemory() запускает 3 параллельных поиска
+3. Query векторизуется через OpenAI embeddings API
+4. Библиотека: поиск в document_chunks (публичные + приватные документы)
+5. Рабочий стол: поиск в personality_embeddings (файлы конкретного assistant)
+6. Дневник: full-text search в MaaS tables (факты из прошлых разговоров)
+7. Результаты ранжируются по релевантности (cosine similarity)
+8. Unified context передаётся в AI для формирования ответа
 
-### 2. [User Flow #2]
+### 2. Три типа памяти - Архитектура
 ```
-[Диаграмма потока]
+┌─────────────────────────────────────────────┐
+│  AI Assistant Memory System                 │
+├─────────────────────────────────────────────┤
+│                                             │
+│  📚 БИБЛИОТЕКА (document_chunks)            │
+│     → Глобальная база знаний                │
+│     → user_id = NULL → публичные            │
+│     → user_id = X → приватные               │
+│     → "Как делать вещи"                     │
+│                                             │
+│  💼 РАБОЧИЙ СТОЛ (personality_embeddings)   │
+│     → Файлы конкретного assistant           │
+│     → personality_id фильтр                 │
+│     → "Инструменты для работы"              │
+│                                             │
+│  📓 ДНЕВНИК (MaaS: 8 tables)                │
+│     → facts, decisions, summaries           │
+│     → project_id фильтр                     │
+│     → "Что пользователь хочет"              │
+│                                             │
+└─────────────────────────────────────────────┘
+       ↓
+   Memory Service API
+       ↓
+   Unified Context
+       ↓
+   AI Response
 ```
 
 ---
@@ -436,13 +476,72 @@ const { user, login, logout } = useAuth();
 
 ### Ваши модули проекта
 
-[ЗАПОЛНИТЬ по мере разработки - добавляйте каждый модуль сюда]
+#### Module 1: Memory Service API
+**Purpose:** Unified search API для трёх типов памяти AI помощника
 
-#### Module 1: [Name]
-[Документация]
+**Location:** `src/api/memory-service.ts`
 
-#### Module 2: [Name]
-[Документация]
+**Components:**
+- `MemoryService` class - основной API
+- `searchLibrary()` - поиск в 📚 document_chunks (Библиотека)
+- `searchDesk()` - поиск в 💼 personality_embeddings (Рабочий стол)
+- `searchDiary()` - поиск в 📓 MaaS tables (Дневник)
+- `searchMemory()` - unified поиск по всем трём источникам
+
+**Dependencies:**
+- Supabase client (src/lib/supabase.ts)
+- OpenAI embeddings API (text-embedding-3-small)
+- TypeScript interfaces: DocumentChunk, PersonalityEmbedding, Fact, ThreadSummary, Decision, etc.
+
+**Integration with other modules:**
+- Database: прямой доступ к 10 таблицам памяти
+- AI Chat: предоставляет context для ответов
+- UI Components: данные для MemoryLibrary, MemoryDiary компонентов
+
+**Input/Output:**
+```typescript
+// Вход
+interface SearchMemoryParams {
+  query: string;
+  userId: string;
+  personalityId?: string;
+  projectId?: string;
+  limit?: number;
+}
+
+// Выход
+interface MemorySearchResult {
+  library: DocumentChunk[];
+  desk: PersonalityEmbedding[];
+  diary: {
+    facts: Fact[];
+    summaries: ThreadSummary[];
+    decisions: Decision[];
+  };
+}
+```
+
+**Example usage:**
+```typescript
+import { MemoryService } from './api/memory-service';
+
+const memoryService = new MemoryService(supabaseClient, openaiApiKey);
+const results = await memoryService.searchMemory({
+  query: 'How to use Supabase?',
+  userId: 'user-123',
+  personalityId: 'personality-456',
+  limit: 5
+});
+```
+
+**Testing:**
+- Test script: `scripts/test-memory-service.mjs`
+
+**Architecture:**
+- Три независимых поиска параллельно
+- Векторизация query через OpenAI embeddings
+- Ранжирование по cosine similarity
+- Aggregation результатов в единый context
 
 ---
 
@@ -662,7 +761,6 @@ function App() {
 
 #### Мета-файлы:
 - [ ] BACKLOG.md — задачи отмечены ✅
-- [ ] PROJECT_SNAPSHOT.md — модуль добавлен
 - [ ] PROCESS.md — чеклист выполнен
 
 ### Граф зависимостей модулей:
@@ -736,8 +834,7 @@ function App() {
 
 ## 📚 Related Documentation
 
-- **BACKLOG.md** - Current implementation status and roadmap
-- **PROJECT_SNAPSHOT.md** - Current project state snapshot
+- **BACKLOG.md** - Current implementation status and roadmap (SINGLE SOURCE OF TRUTH for tasks)
 - **PROCESS.md** - Documentation update process after each phase
 - **DEVELOPMENT_PLAN_TEMPLATE.md** - Planning methodology
 - **AGENTS.md** - AI assistant working instructions
