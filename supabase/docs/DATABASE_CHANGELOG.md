@@ -34,6 +34,29 @@
 
 ---
 
+## 🚀 Recent Changes (November 2025)
+
+### 2025-11-01 - Add updated_at to chats table ⏳ PENDING
+
+**Migration:** `20251101000000_add_chats_updated_at.sql`
+
+**Status:** Migration file created, NOT YET APPLIED to database
+
+**Problem:** Chats were sorted by `created_at`, not last activity time
+
+**Changes (when applied):**
+- Add `updated_at` column to `chats` table
+- Create trigger function `update_updated_at_column()` for auto-update
+- Create trigger `update_chats_updated_at` on UPDATE
+- Backfill existing records (updated_at = created_at)
+- Add index `chats_updated_at_idx` for faster sorting
+
+**Temporary fix:** Using `created_at` for sorting until migration applied
+
+**TODO:** Apply migration via Supabase SQL Editor (see MIGRATION_TODO.md)
+
+---
+
 ## 🚀 Recent Changes (February 2025)
 
 ### 2025-02-29 - document_chunks Schema Fix ✅

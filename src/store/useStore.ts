@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import { User } from '@supabase/supabase-js';
-import { supabase, Database, PersonalityFile } from '../lib/supabase';
+import { supabase, Database, PersonalityFile, DocumentChunk } from '../lib/supabase';
 import { OpenAIService, TokenUsage } from '../lib/openai';
 import { AssistantService } from '../lib/assistantService';
 import { VectorStoreService } from '../lib/vectorStoreService';
 import { IntegrationService } from '../lib/integrationService';
+import { MemoryService } from '../api/memory-service';
 import { encryption } from '../lib/encryption';
 
 type Chat = Database['public']['Tables']['chats']['Row'] & {
@@ -31,12 +32,16 @@ interface AppState {
   // Personalities
   personalities: Personality[];
   activePersonality: Personality | null;
-  
+
+  // Memory Library
+  libraryDocuments: DocumentChunk[];
+
   // UI
   isGenerating: boolean;
   sidebarOpen: boolean;
   showSettings: boolean;
   showPersonalities: boolean;
+  showMemoryLibrary: boolean;
   uploading: boolean;
   error: string | null;
   
@@ -45,6 +50,7 @@ interface AppState {
   assistantService: AssistantService;
   vectorStoreService: VectorStoreService;
   integrationService: IntegrationService;
+  memoryService: MemoryService;
   
   // Actions
   setUser: (user: User | null) => void;
@@ -59,6 +65,7 @@ interface AppState {
   toggleSidebar: () => void;
   toggleSettings: () => void;
   togglePersonalities: () => void;
+  toggleMemoryLibrary: () => void;
   loadPersonalities: () => Promise<void>;
   createPersonality: (name: string, prompt: string, hasMemory?: boolean) => Promise<Personality | null>;
   updatePersonality: (id: string, updates: Partial<Personality>) => Promise<void>;
@@ -66,6 +73,9 @@ interface AppState {
   setActivePersonality: (id: string) => Promise<void>;
   uploadPersonalityFile: (personalityId: string, file: File) => Promise<PersonalityFile>;
   deletePersonalityFile: (personalityId: string, fileId: string) => Promise<void>;
+  loadLibraryDocuments: () => Promise<void>;
+  uploadDocumentToLibrary: (file: File, isPublic: boolean, projectId?: string) => Promise<DocumentChunk>;
+  deleteLibraryDocument: (id: string) => Promise<void>;
   setIsGenerating: (generating: boolean) => void;
   
   // Helper methods (private-like)
@@ -84,16 +94,19 @@ export const useStore = create<AppState>((set, get) => ({
   settings: null,
   personalities: [],
   activePersonality: null,
+  libraryDocuments: [],
   isGenerating: false,
   sidebarOpen: true,
   showSettings: false,
   showPersonalities: false,
+  showMemoryLibrary: false,
   uploading: false,
   error: null,
   openaiService: new OpenAIService(),
   assistantService: new AssistantService(),
   vectorStoreService: new VectorStoreService(),
   integrationService: new IntegrationService(),
+  memoryService: new MemoryService(),
 
   // Actions
   setUser: (user) => {
@@ -115,7 +128,7 @@ export const useStore = create<AppState>((set, get) => ({
       .from('chats')
       .select('*')
       .eq('user_id', user.id)
-      .order('updated_at', { ascending: false });
+      .order('created_at', { ascending: false }); // TODO: Change to updated_at after migration applied
 
     if (!error && data) {
       set({ chats: data });
@@ -230,9 +243,51 @@ export const useStore = create<AppState>((set, get) => ({
         content
       });
 
+      // === MEMORY SERVICE: Enrich context with unified memory ===
+      let enrichedContent = content;
+      try {
+        const { memoryService } = get();
+
+        // Search memory if service is initialized
+        if (memoryService) {
+          console.log('🧠 Searching unified memory...');
+
+          const memoryResults = await memoryService.searchMemory({
+            query: content,
+            user_id: user.id,
+            personality_id: activePersonality?.id,
+            limit: 5,
+            similarity_threshold: 0.6
+          });
+
+          // Build enriched context if results found
+          if (memoryResults.results.length > 0) {
+            console.log(`✅ Found ${memoryResults.total_results} memory results`);
+
+            const contextParts = ['[Relevant context from memory:]'];
+
+            memoryResults.results.forEach(result => {
+              const sourceEmoji = result.source === 'library' ? '📚' :
+                                 result.source === 'desk' ? '💼' : '📓';
+              contextParts.push(`\n${sourceEmoji} ${result.source.toUpperCase()}: ${result.content.substring(0, 300)}`);
+            });
+
+            // Prepend memory context to user message
+            enrichedContent = `${contextParts.join('\n')}\n\n[User Question]: ${content}`;
+
+            console.log('🚀 Context enriched with memory');
+          } else {
+            console.log('ℹ️ No relevant memory found');
+          }
+        }
+      } catch (memoryError) {
+        console.warn('Memory search failed (non-critical):', memoryError);
+        // Continue with original content if memory search fails
+      }
+
       // Check if we should use Assistants API (when personality has files and OpenAI assistant)
-      const shouldUseAssistantsAPI = activePersonality?.files && 
-        activePersonality.files.length > 0 && 
+      const shouldUseAssistantsAPI = activePersonality?.files &&
+        activePersonality.files.length > 0 &&
         activePersonality.openai_assistant_id;
 
       // Create assistant message placeholder
@@ -252,11 +307,11 @@ export const useStore = create<AppState>((set, get) => ({
       if (shouldUseAssistantsAPI) {
         console.log('Using Assistants API for chat with files');
         // Use Assistants API for personalities with files
-        assistantResponse = await get()._handleAssistantsAPIMessage(chatId, content, activePersonality!);
+        assistantResponse = await get()._handleAssistantsAPIMessage(chatId, enrichedContent, activePersonality!);
       } else {
         console.log('Using Chat Completions API');
         // Use regular Chat Completions API
-        const result = await get()._handleChatCompletionsAPI(chatId, content, activePersonality, messages, settings);
+        const result = await get()._handleChatCompletionsAPI(chatId, enrichedContent, activePersonality, messages, settings);
         assistantResponse = result.response;
         tokenUsage = result.usage;
       }
@@ -284,6 +339,70 @@ export const useStore = create<AppState>((set, get) => ({
 
       if (saveError) {
         console.error('Error saving to DB:', saveError);
+      }
+
+      // === FACTS EXTRACTION: Save conversation to Diary ===
+      try {
+        // Get or create default project for user
+        const { data: projects } = await supabase
+          .from('projects')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('is_default', true)
+          .limit(1);
+
+        let projectId = projects && projects.length > 0 ? projects[0].id : null;
+
+        // Create default project if doesn't exist
+        if (!projectId) {
+          const { data: newProject } = await supabase
+            .from('projects')
+            .insert({
+              user_id: user.id,
+              name: 'Personal Workspace',
+              mission: 'Default project for personal conversations',
+              is_default: true,
+              status: 'active'
+            })
+            .select('id')
+            .single();
+
+          projectId = newProject?.id || null;
+        }
+
+        // Extract simple fact from conversation
+        if (projectId) {
+          const factSubject = content.substring(0, 100); // Use first 100 chars of question as subject
+          const factValue = {
+            question: content,
+            answer: assistantResponse.substring(0, 500), // Store first 500 chars of answer
+            personality: activePersonality?.name || 'Default',
+            timestamp: new Date().toISOString()
+          };
+
+          await supabase.from('facts').insert({
+            project_id: projectId,
+            session_id: chatId,
+            user_id: user.id,
+            subject: factSubject,
+            value: factValue,
+            level: 'fact',
+            source_type: 'observed',
+            confidence: 1.0,
+            importance: 5,
+            tags: [activePersonality?.name || 'general', 'conversation'],
+            metadata: {
+              chat_id: chatId,
+              personality_id: activePersonality?.id
+            },
+            is_active: true
+          });
+
+          console.log('📓 Fact saved to Diary');
+        }
+      } catch (factsError) {
+        console.warn('Facts extraction failed (non-critical):', factsError);
+        // Continue even if facts extraction fails
       }
 
       // Update chat title if it's the first message
@@ -346,6 +465,7 @@ export const useStore = create<AppState>((set, get) => ({
         get().assistantService.setApiKey(data.openai_api_key);
         get().vectorStoreService.setApiKey(data.openai_api_key);
         get().integrationService.setApiKey(data.openai_api_key);
+        get().memoryService.initOpenAI(data.openai_api_key);
       }
     }
   },
@@ -374,6 +494,7 @@ export const useStore = create<AppState>((set, get) => ({
         get().assistantService.setApiKey(newSettings.openai_api_key);
         get().vectorStoreService.setApiKey(newSettings.openai_api_key);
         get().integrationService.setApiKey(newSettings.openai_api_key);
+        get().memoryService.initOpenAI(newSettings.openai_api_key);
       }
     }
   },
@@ -381,6 +502,7 @@ export const useStore = create<AppState>((set, get) => ({
   toggleSidebar: () => set(state => ({ sidebarOpen: !state.sidebarOpen })),
   toggleSettings: () => set(state => ({ showSettings: !state.showSettings })),
   togglePersonalities: () => set(state => ({ showPersonalities: !state.showPersonalities })),
+  toggleMemoryLibrary: () => set(state => ({ showMemoryLibrary: !state.showMemoryLibrary })),
 
   loadPersonalities: async () => {
     const { user } = get();
@@ -635,6 +757,106 @@ export const useStore = create<AppState>((set, get) => ({
 
       // Note: Vector Store management is handled separately by VectorStoreService
       // File removal from vector stores should be implemented when vector_store_id is tracked
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  // === MEMORY LIBRARY METHODS ===
+
+  loadLibraryDocuments: async () => {
+    const { user } = get();
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('document_chunks')
+        .select('*')
+        .or(`user_id.eq.${user.id},and(user_id.is.null,is_public.eq.true)`)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        set({ libraryDocuments: data as DocumentChunk[] });
+      }
+    } catch (error) {
+      console.error('Failed to load library documents:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to load library' });
+    }
+  },
+
+  uploadDocumentToLibrary: async (file: File, isPublic: boolean, projectId?: string) => {
+    const { user, settings, openaiService } = get();
+
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+
+    if (!settings?.openai_api_key) {
+      throw new Error('OpenAI API key is required for document upload');
+    }
+
+    try {
+      set({ uploading: true, error: null });
+
+      // Read file content
+      const content = await file.text();
+
+      // Set API key for OpenAI service
+      openaiService.setApiKey(settings.openai_api_key.trim());
+
+      // Generate embedding using OpenAI
+      const embeddingResponse = await openaiService.createEmbedding(content);
+      const embedding = embeddingResponse.data[0].embedding;
+
+      // Insert into document_chunks
+      const { data, error } = await supabase
+        .from('document_chunks')
+        .insert({
+          user_id: isPublic ? null : user.id,
+          is_public: isPublic,
+          project_id: projectId || null,
+          content: content,
+          embedding: embedding,
+          file_name: file.name,
+          file_type: file.type,
+          file_size: file.size,
+          metadata: {
+            original_name: file.name,
+            uploaded_by: user.id,
+            upload_date: new Date().toISOString()
+          }
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update local state
+      set(state => ({
+        libraryDocuments: [data as DocumentChunk, ...state.libraryDocuments],
+        uploading: false
+      }));
+
+      return data as DocumentChunk;
+    } catch (error) {
+      set({ uploading: false, error: error instanceof Error ? error.message : 'Upload failed' });
+      throw error;
+    }
+  },
+
+  deleteLibraryDocument: async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('document_chunks')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Update local state
+      set(state => ({
+        libraryDocuments: state.libraryDocuments.filter(doc => doc.id !== id)
+      }));
     } catch (error) {
       throw error;
     }
