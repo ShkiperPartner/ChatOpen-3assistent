@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useStore } from '../store/useStore';
-import { Send, Square, Bot, User, Zap, Brain, Copy, Check } from 'lucide-react';
+import { Send, Square, Bot, User, Zap, Brain, Copy, Check, Library } from 'lucide-react';
 
 export const ChatArea: React.FC = () => {
   const {
@@ -17,6 +17,7 @@ export const ChatArea: React.FC = () => {
     settings,
     currentChatId,
     togglePersonalities,
+    toggleMemoryLibrary,
     updatePersonality,
     setActivePersonality
   } = useStore();
@@ -164,6 +165,15 @@ export const ChatArea: React.FC = () => {
             >
               <User className="w-4 h-4" />
               <span className="hidden sm:inline">Personality</span>
+            </button>
+
+            <button
+              onClick={toggleMemoryLibrary}
+              className="flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 px-3 py-2 rounded-lg transition-colors"
+              title="Memory Library"
+            >
+              <Library className="w-4 h-4" />
+              <span className="hidden sm:inline">Library</span>
             </button>
           </div>
         </div>

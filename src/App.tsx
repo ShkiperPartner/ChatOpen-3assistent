@@ -6,9 +6,10 @@ import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { Settings } from './components/Settings';
 import { Personalities } from './components/Personalities';
+import { MemoryLibrary } from './components/MemoryLibrary';
 
 function App() {
-  const { user, setUser, isLoading, showSettings, showPersonalities, settings } = useStore();
+  const { user, setUser, isLoading, showSettings, showPersonalities, showMemoryLibrary, settings } = useStore();
 
   useEffect(() => {
     // Get initial session
@@ -57,6 +58,7 @@ function App() {
       <ChatArea />
       {showSettings && <Settings />}
       {showPersonalities && <Personalities />}
+      {showMemoryLibrary && <MemoryLibrary />}
     </div>
   );
 }
