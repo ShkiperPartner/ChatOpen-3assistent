@@ -380,7 +380,7 @@ export const useStore = create<AppState>((set, get) => ({
             timestamp: new Date().toISOString()
           };
 
-          await supabase.from('facts').insert({
+          const { data: factData, error: factError } = await supabase.from('facts').insert({
             project_id: projectId,
             session_id: chatId,
             user_id: user.id,
@@ -398,7 +398,11 @@ export const useStore = create<AppState>((set, get) => ({
             is_active: true
           });
 
-          console.log('📓 Fact saved to Diary');
+          if (factError) {
+            console.error('❌ Failed to save fact:', factError);
+          } else {
+            console.log('📓 Fact saved to Diary');
+          }
         }
       } catch (factsError) {
         console.warn('Facts extraction failed (non-critical):', factsError);

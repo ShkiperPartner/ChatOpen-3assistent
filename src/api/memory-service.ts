@@ -367,8 +367,11 @@ export class MemoryService {
         query = query.eq('project_id', projectId);
       }
 
-      // Full-text search в subject или value
-      query = query.or(`subject.ilike.%${queryText}%,value::text.ilike.%${queryText}%`);
+      // Simplified text search - только по subject (без JSONB casting)
+      // TODO: Implement proper full-text search with PostgreSQL FTS
+      if (queryText && queryText.length > 0) {
+        query = query.ilike('subject', `%${queryText}%`);
+      }
 
       const { data, error } = await query;
 
