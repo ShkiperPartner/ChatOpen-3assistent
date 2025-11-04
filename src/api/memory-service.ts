@@ -272,13 +272,12 @@ export class MemoryService {
 
       const { data, error } = await supabase
         .from('personality_embeddings')
-        .select('content, file_name, embedding, metadata')
+        .select('chunk_text, embedding, chunk_index, created_at')
         .eq('personality_id', personalityId)
         .limit(limit);
 
       if (error) {
-        // Таблица может не существовать - это нормально на данном этапе
-        console.warn('personality_embeddings table not found, skipping desk search');
+        console.error('personality_embeddings error:', error);
         return [];
       }
 
@@ -287,11 +286,11 @@ export class MemoryService {
         const similarity = this.cosineSimilarity(queryEmbedding, item.embedding);
         return {
           source: 'desk' as MemorySource,
-          content: item.content,
+          content: item.chunk_text,
           relevance: similarity,
           metadata: {
-            file_name: item.file_name,
-            ...item.metadata,
+            chunk_index: item.chunk_index,
+            created_at: item.created_at,
           },
         };
       });

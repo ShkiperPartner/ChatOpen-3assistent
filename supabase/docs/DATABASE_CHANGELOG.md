@@ -2,7 +2,7 @@
 
 **Проект:** ChatOpenAI Integration Assistant
 **База данных:** Supabase PostgreSQL
-**Последнее обновление:** 2025-02-29
+**Последнее обновление:** 2025-11-04
 
 ---
 
@@ -36,24 +36,72 @@
 
 ## 🚀 Recent Changes (November 2025)
 
-### 2025-11-01 - Add updated_at to chats table ⏳ PENDING
+### 2025-11-01 - Add updated_at to chats table ✅ APPLIED
 
 **Migration:** `20251101000000_add_chats_updated_at.sql`
 
-**Status:** Migration file created, NOT YET APPLIED to database
+**Status:** ✅ Applied on 2025-11-04 via Supabase SQL Editor
 
 **Problem:** Chats were sorted by `created_at`, not last activity time
 
-**Changes (when applied):**
-- Add `updated_at` column to `chats` table
-- Create trigger function `update_updated_at_column()` for auto-update
-- Create trigger `update_chats_updated_at` on UPDATE
-- Backfill existing records (updated_at = created_at)
-- Add index `chats_updated_at_idx` for faster sorting
+**Changes:**
+- ✅ Added `updated_at` column to `chats` table
+- ✅ Created trigger function `update_updated_at_column()` for auto-update
+- ✅ Created trigger `update_chats_updated_at` on UPDATE
+- ✅ Backfilled existing records (updated_at = created_at)
+- ✅ Added index `chats_updated_at_idx` for faster sorting
 
-**Temporary fix:** Using `created_at` for sorting until migration applied
+**Result:** Chats now sort by last activity. When user sends message, chat "bubbles up" to top of list.
 
-**TODO:** Apply migration via Supabase SQL Editor (see MIGRATION_TODO.md)
+---
+
+### 2025-11-04 - Add RLS Policies for MaaS Tables ✅ APPLIED
+
+**Migration:** `20251104000000_add_maas_rls_policies.sql`
+
+**Status:** ✅ Applied on 2025-11-04 via Supabase SQL Editor
+
+**Problem:** MaaS tables (Memory-as-a-Service) were created without Row Level Security, causing 400 errors in Memory Service
+
+**Root Cause:** Migration `20250229000002_migrate_maas_tables.sql` created tables but didn't enable RLS
+
+**Changes:**
+- ✅ Enabled RLS on 8 MaaS tables:
+  - `projects` - user can view/create/update own projects
+  - `facts` - user can view/create/update facts from their projects
+  - `thread_summaries` - user can view/create summaries from their projects
+  - `decisions` - user can view/create decisions from their projects
+  - `links` - user can view/create links from their projects
+  - `sources` - user can view/create sources from their projects
+  - `maas_metrics` - user can view/create metrics from their projects
+  - `snapshot_cache` - user can view/create snapshots from their projects
+
+**RLS Policy Pattern:**
+```sql
+-- All policies check: auth.uid()::text = user_id (for projects)
+-- Or: project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()::text)
+```
+
+**Result:** Memory Service can now successfully save and retrieve facts from MaaS tables. 400 errors resolved.
+
+---
+
+### 2025-11-04 - Fix personality_embeddings Column Mismatch ✅
+
+**File Changed:** `src/api/memory-service.ts`
+
+**Problem:** Code tried to SELECT non-existent columns causing 400 errors
+
+**Root Cause:**
+- Code requested: `content, file_name, embedding, metadata`
+- Actual schema: `chunk_text, embedding, chunk_index, created_at`
+
+**Changes:**
+- ✅ Updated SELECT query to match real schema
+- ✅ Fixed data mapping: `item.content` → `item.chunk_text`
+- ✅ Updated metadata structure
+
+**Result:** Memory Service "Desk" search (personality_embeddings:281) now works correctly.
 
 ---
 

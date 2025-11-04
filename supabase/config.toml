@@ -1,0 +1,21 @@
+# Supabase Configuration
+# Learn more: https://supabase.com/docs/guides/cli/config
+
+[project]
+# Project ref from Supabase Dashboard
+ref = "tslfszdhvmszbazutcdi"
+
+[db]
+# Database settings
+port = 5432
+
+[db.pooler]
+enabled = false
+
+[api]
+enabled = true
+port = 54321
+
+[studio]
+enabled = true
+port = 54323

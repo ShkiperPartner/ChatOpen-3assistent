@@ -128,7 +128,7 @@ export const useStore = create<AppState>((set, get) => ({
       .from('chats')
       .select('*')
       .eq('user_id', user.id)
-      .order('created_at', { ascending: false }); // TODO: Change to updated_at after migration applied
+      .order('updated_at', { ascending: false });
 
     if (!error && data) {
       set({ chats: data });
