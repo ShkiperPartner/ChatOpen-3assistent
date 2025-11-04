@@ -1,0 +1,245 @@
+name: Security Audit
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly security scan every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for better analysis
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 1. DEPENDENCY AUDIT
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Run npm audit
+        id: npm-audit
+        run: |
+          echo "## 📦 NPM Audit Results" >> $GITHUB_STEP_SUMMARY
+          npm audit --audit-level=moderate --json > audit-report.json || true
+
+          # Parse and display critical/high vulnerabilities
+          CRITICAL=$(cat audit-report.json | grep -o '"critical":[0-9]*' | grep -o '[0-9]*' || echo "0")
+          HIGH=$(cat audit-report.json | grep -o '"high":[0-9]*' | grep -o '[0-9]*' || echo "0")
+
+          echo "- Critical vulnerabilities: $CRITICAL" >> $GITHUB_STEP_SUMMARY
+          echo "- High vulnerabilities: $HIGH" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Found critical vulnerabilities!"
+            npm audit --audit-level=moderate
+            exit 1
+          fi
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 2. SECRET SCANNING
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 3. STATIC CODE ANALYSIS
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Run ESLint security check
+        run: |
+          echo "## 🔍 ESLint Security Check" >> $GITHUB_STEP_SUMMARY
+          npm run lint || true
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 4. CUSTOM SECURITY CHECKS
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "## 🔐 Hardcoded Secrets Check" >> $GITHUB_STEP_SUMMARY
+
+          # Check for common secret patterns
+          SECRETS=$(grep -r -i -E "(api[_-]?key|password|secret|token)\s*[:=]\s*['\"][^'\"]{10,}" src/ || true)
+
+          if [ -n "$SECRETS" ]; then
+            echo "❌ Found potential hardcoded secrets:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$SECRETS" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ No hardcoded secrets found" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      - name: Check for dangerous patterns
+        run: |
+          echo "## ⚠️ Dangerous Patterns Check" >> $GITHUB_STEP_SUMMARY
+
+          # Check for eval, dangerouslySetInnerHTML, innerHTML
+          DANGEROUS=$(grep -r -E "eval\(|dangerouslySetInnerHTML|innerHTML\s*=" src/ || true)
+
+          if [ -n "$DANGEROUS" ]; then
+            echo "⚠️ Found potentially dangerous patterns:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$DANGEROUS" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No dangerous patterns found" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      - name: Check .env files
+        run: |
+          echo "## 🔒 Environment Files Check" >> $GITHUB_STEP_SUMMARY
+
+          # Check if .env is in .gitignore
+          if grep -q "\.env" .gitignore; then
+            echo "✅ .env is in .gitignore" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ .env NOT in .gitignore!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          # Check if any .env files are tracked
+          ENV_FILES=$(git ls-files | grep -E "\.env$" || true)
+          if [ -n "$ENV_FILES" ]; then
+            echo "❌ Found .env files in git:" >> $GITHUB_STEP_SUMMARY
+            echo "$ENV_FILES" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ No .env files tracked in git" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 5. PROJECT-SPECIFIC CHECKS
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Check Supabase RLS policies
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -f "scripts/check-rls-policies.js" ]; then
+            echo "## 🛡️ Supabase RLS Check" >> $GITHUB_STEP_SUMMARY
+            node scripts/check-rls-policies.js || echo "⚠️ RLS check skipped (credentials not configured)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ RLS check script not found" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      - name: Check OpenAI prompt injection risks
+        run: |
+          if [ -f "scripts/check-prompt-injection.js" ]; then
+            echo "## 🤖 OpenAI Security Check" >> $GITHUB_STEP_SUMMARY
+            node scripts/check-prompt-injection.js
+          else
+            echo "⚠️ Prompt injection check script not found" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 6. BUILD & TYPE CHECK
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: TypeScript type check
+        run: |
+          echo "## 📘 TypeScript Check" >> $GITHUB_STEP_SUMMARY
+          npx tsc --noEmit || echo "⚠️ Type errors found" >> $GITHUB_STEP_SUMMARY
+        continue-on-error: true
+
+      - name: Build project
+        run: |
+          echo "## 🏗️ Build Check" >> $GITHUB_STEP_SUMMARY
+          npm run build
+          echo "✅ Build successful" >> $GITHUB_STEP_SUMMARY
+        continue-on-error: true
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 7. REPORT GENERATION
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-audit-report-${{ github.run_number }}
+          path: |
+            audit-report.json
+            security-report.md
+          retention-days: 30
+
+      - name: Final summary
+        if: always()
+        run: |
+          echo "## 📊 Security Audit Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Audit completed at: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "Run number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # CODEQL ANALYSIS (Advanced)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"

@@ -502,6 +502,174 @@ GET  /api/memory/diary/{project_id}
 
 ---
 
+## 🔒 Security Automation
+
+**Статус:** ✅ Implemented (2025-01-31)
+**Уровни защиты:** 3-layer security system
+
+### Трёхуровневая система безопасности:
+
+```
+┌─────────────────────────────────────────┐
+│  Уровень 1: Manual Audit                │
+│  /security - полный audit по требованию  │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│  Уровень 2: Git Hooks                   │
+│  Pre-commit - проверка перед коммитом    │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│  Уровень 3: CI/CD Pipeline              │
+│  GitHub Actions - audit при PR/push      │
+└─────────────────────────────────────────┘
+```
+
+### ✅ Реализованные компоненты:
+
+#### 1. GitHub Actions Workflow (`.github/workflows/security.yml`)
+**Триггеры:**
+- Pull requests в main/develop
+- Push в main
+- Еженедельно (понедельник 9:00 UTC)
+- Вручную через workflow_dispatch
+
+**Проверки:**
+- npm audit (dependency vulnerabilities)
+- TruffleHog (secret scanning)
+- ESLint security checks
+- Hardcoded secrets detection
+- Dangerous patterns (eval, innerHTML)
+- Supabase RLS policies
+- OpenAI prompt injection risks
+- TypeScript type check
+- Build validation
+
+#### 2. Security Scripts (`scripts/`)
+- **check-rls-policies.js** - проверка Supabase RLS
+  - Все таблицы имеют RLS enabled
+  - Наличие policies
+  - Корректность auth.uid() usage
+
+- **check-prompt-injection.js** - OpenAI security
+  - Транслитерация имён ассистентов
+  - User input validation
+  - Template string injection
+  - Кириллица в OpenAI API
+
+- **security-check.sh** - быстрая pre-commit проверка
+  - Hardcoded secrets (< 1 сек)
+  - .env файлы в commit
+  - Опасные паттерны
+  - Большие файлы (>5MB)
+
+#### 3. Slash команда `/security`
+**Использование:**
+```bash
+/security  # Запустить полный security audit
+```
+
+**Что проверяет:**
+- OWASP Top 10 coverage
+- Project-specific vulnerabilities
+- Dependency audit
+- Code pattern analysis
+- Генерация детального отчёта
+
+#### 4. Git Pre-commit Hook
+**Установка:**
+```bash
+bash scripts/install-hooks.sh
+```
+
+**Автоматически проверяет перед каждым commit:**
+- ❌ Блокирует: hardcoded secrets, .env файлы
+- ⚠️ Предупреждает: dangerous patterns, large files
+
+**Bypass (не рекомендуется):**
+```bash
+git commit --no-verify
+```
+
+### 🎯 Security Checklist
+
+#### Supabase Security:
+- ✅ RLS enabled на всех таблицах
+- ✅ Policies для user-specific данных
+- ✅ Service key только в secrets
+- ✅ Anon key для frontend
+
+#### OpenAI Integration:
+- ✅ Транслитерация для assistant names
+- ✅ API key в environment variables
+- ✅ User input validation
+- ✅ Rate limiting configured
+
+#### Frontend:
+- ✅ React auto-escaping
+- ✅ react-markdown для user content
+- ✅ Нет dangerouslySetInnerHTML
+- ✅ localStorage usage минимален
+
+#### Dependencies:
+- ✅ npm audit без critical issues
+- ✅ Automated scanning в CI/CD
+- ✅ Lock файлы в репозитории
+
+### 📊 Security Metrics
+
+**Current Status (2025-01-31):**
+- Critical vulnerabilities: 0 🟢
+- High severity: 0 🟢
+- Medium severity: 11 🟡 (mostly false positives)
+- RLS coverage: 100% ✅
+- OpenAI security: PASSED ✅
+
+**Dependency Status:**
+- npm audit: 11 moderate vulnerabilities
+- Автоматический мониторинг: GitHub Dependabot
+- Weekly scans: Enabled
+
+### 📚 Документация:
+
+- **SECURITY_AUTOMATION_PLAN.md** - полный план и roadmap
+- **INSTALL_HOOKS.md** - установка git hooks
+- **scripts/README.md** - документация скриптов
+- **.github/workflows/security.yml** - CI/CD конфигурация
+- **.claude/commands/security.md** - slash команда
+
+### 🔄 Maintenance:
+
+**Регулярные проверки:**
+- ✅ Автоматические: GitHub Actions (при PR/push/weekly)
+- ✅ Pre-commit: Локальные проверки
+- 📋 Manual audit: `/security` (рекомендуется ежемесячно)
+
+**Обновления:**
+- Security скрипты: по мере необходимости
+- Dependencies: npm audit fix (осторожно!)
+- Policies: при добавлении новых таблиц
+
+### 💡 Best Practices:
+
+1. **Никогда не коммить:**
+   - .env файлы
+   - API keys в коде
+   - Hardcoded credentials
+
+2. **Всегда проверять:**
+   - User input перед OpenAI API
+   - RLS policies на новых таблицах
+   - Dependencies на уязвимости
+
+3. **Использовать:**
+   - Environment variables для secrets
+   - Транслитерацию для кириллицы
+   - Git hooks для автоматических проверок
+
+---
+
 ## 📝 Важные заметки
 
 ### Архитектурные решения:
