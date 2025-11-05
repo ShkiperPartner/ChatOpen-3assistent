@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useStore } from '../store/useStore';
-import { Send, Square, Bot, User, Zap, Brain, Copy, Check, Library } from 'lucide-react';
+import { Send, Square, Bot, User, Zap, Brain, Copy, Check, Library, BookOpen, Search } from 'lucide-react';
 
 export const ChatArea: React.FC = () => {
   const {
@@ -18,6 +18,8 @@ export const ChatArea: React.FC = () => {
     currentChatId,
     togglePersonalities,
     toggleMemoryLibrary,
+    toggleMemoryDiary,
+    toggleMemoryExplorer,
     updatePersonality,
     setActivePersonality
   } = useStore();
@@ -174,6 +176,24 @@ export const ChatArea: React.FC = () => {
             >
               <Library className="w-4 h-4" />
               <span className="hidden sm:inline">Library</span>
+            </button>
+
+            <button
+              onClick={toggleMemoryDiary}
+              className="flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 px-3 py-2 rounded-lg transition-colors"
+              title="Memory Diary"
+            >
+              <BookOpen className="w-4 h-4" />
+              <span className="hidden sm:inline">Diary</span>
+            </button>
+
+            <button
+              onClick={toggleMemoryExplorer}
+              className="flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 px-3 py-2 rounded-lg transition-colors"
+              title="Memory Explorer"
+            >
+              <Search className="w-4 h-4" />
+              <span className="hidden sm:inline">Search</span>
             </button>
           </div>
         </div>

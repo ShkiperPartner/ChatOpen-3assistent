@@ -7,9 +7,11 @@ import { ChatArea } from './components/ChatArea';
 import { Settings } from './components/Settings';
 import { Personalities } from './components/Personalities';
 import { MemoryLibrary } from './components/MemoryLibrary';
+import { MemoryDiary } from './components/MemoryDiary';
+import { MemoryExplorer } from './components/MemoryExplorer';
 
 function App() {
-  const { user, setUser, isLoading, showSettings, showPersonalities, showMemoryLibrary, settings } = useStore();
+  const { user, setUser, isLoading, showSettings, showPersonalities, showMemoryLibrary, showMemoryDiary, showMemoryExplorer, settings } = useStore();
 
   useEffect(() => {
     // Get initial session
@@ -59,6 +61,8 @@ function App() {
       {showSettings && <Settings />}
       {showPersonalities && <Personalities />}
       {showMemoryLibrary && <MemoryLibrary />}
+      {showMemoryDiary && <MemoryDiary />}
+      {showMemoryExplorer && <MemoryExplorer />}
     </div>
   );
 }

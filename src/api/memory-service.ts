@@ -548,3 +548,21 @@ export class MemoryService {
  * ```
  */
 export const memoryService = new MemoryService();
+
+/**
+ * Convenient wrapper function for searching memory
+ *
+ * @example
+ * ```typescript
+ * import { searchMemory } from './api/memory-service';
+ *
+ * const results = await searchMemory({
+ *   query: 'user preferences',
+ *   user_id: userId,
+ *   personality_id: personalityId
+ * });
+ * ```
+ */
+export async function searchMemory(query: MemoryQuery): Promise<UnifiedMemoryResult> {
+  return memoryService.searchMemory(query);
+}

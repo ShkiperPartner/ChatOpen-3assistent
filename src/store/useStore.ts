@@ -42,6 +42,8 @@ interface AppState {
   showSettings: boolean;
   showPersonalities: boolean;
   showMemoryLibrary: boolean;
+  showMemoryDiary: boolean;
+  showMemoryExplorer: boolean;
   uploading: boolean;
   error: string | null;
   
@@ -66,6 +68,8 @@ interface AppState {
   toggleSettings: () => void;
   togglePersonalities: () => void;
   toggleMemoryLibrary: () => void;
+  toggleMemoryDiary: () => void;
+  toggleMemoryExplorer: () => void;
   loadPersonalities: () => Promise<void>;
   createPersonality: (name: string, prompt: string, hasMemory?: boolean) => Promise<Personality | null>;
   updatePersonality: (id: string, updates: Partial<Personality>) => Promise<void>;
@@ -100,6 +104,8 @@ export const useStore = create<AppState>((set, get) => ({
   showSettings: false,
   showPersonalities: false,
   showMemoryLibrary: false,
+  showMemoryDiary: false,
+  showMemoryExplorer: false,
   uploading: false,
   error: null,
   openaiService: new OpenAIService(),
@@ -507,6 +513,8 @@ export const useStore = create<AppState>((set, get) => ({
   toggleSettings: () => set(state => ({ showSettings: !state.showSettings })),
   togglePersonalities: () => set(state => ({ showPersonalities: !state.showPersonalities })),
   toggleMemoryLibrary: () => set(state => ({ showMemoryLibrary: !state.showMemoryLibrary })),
+  toggleMemoryDiary: () => set(state => ({ showMemoryDiary: !state.showMemoryDiary })),
+  toggleMemoryExplorer: () => set(state => ({ showMemoryExplorer: !state.showMemoryExplorer })),
 
   loadPersonalities: async () => {
     const { user } = get();
