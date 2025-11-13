@@ -20,8 +20,35 @@ function transliterate(text: string): string {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  tool_call_id?: string; // For tool response messages
+  tool_calls?: ToolCall[]; // For assistant messages with tool calls
+}
+
+// Function Calling types
+export interface FunctionDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: string;
+    properties: Record<string, any>;
+    required?: string[];
+  };
+}
+
+export interface Tool {
+  type: 'function';
+  function: FunctionDefinition;
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string; // JSON string
+  };
 }
 
 export interface ModelSettings {
@@ -105,18 +132,33 @@ export class OpenAIService {
     }
   }
 
-  async createChatCompletion(messages: ChatMessage[], settings: ModelSettings) {
+  async createChatCompletion(
+    messages: ChatMessage[],
+    settings: ModelSettings,
+    tools?: Tool[],
+    tool_choice?: 'auto' | 'none' | 'required'
+  ) {
     if (!this.openai) {
       throw new Error('OpenAI API key is not properly set or is invalid. Please check your API key in settings.');
     }
 
     try {
-      const response = await this.openai.chat.completions.create({
+      const requestParams: any = {
         model: settings.model,
         messages,
         temperature: settings.temperature,
         max_tokens: settings.max_tokens,
-      });
+      };
+
+      // Add tools if provided
+      if (tools && tools.length > 0) {
+        requestParams.tools = tools;
+        if (tool_choice) {
+          requestParams.tool_choice = tool_choice;
+        }
+      }
+
+      const response = await this.openai.chat.completions.create(requestParams);
 
       return response;
     } catch (error) {

@@ -85,6 +85,11 @@ interface AppState {
   // Helper methods (private-like)
   _handleChatCompletionsAPI: (chatId: string, content: string, activePersonality: Personality | null, messages: Message[], settings: UserSettings) => Promise<{ response: string; usage: any }>;
   _handleAssistantsAPIMessage: (chatId: string, content: string, personality: Personality) => Promise<string>;
+
+  // Facts management (for Function Calling)
+  _saveFact: (projectId: string, chatId: string, subject: string, value: any, confidence?: number, importance?: number, tags?: string[]) => Promise<{ success: boolean; message: string; factId?: string }>;
+  _updateFact: (factId: string, updates: { subject?: string; value?: any; confidence?: number; importance?: number; tags?: string[] }) => Promise<{ success: boolean; message: string }>;
+  _deleteFact: (factId: string) => Promise<{ success: boolean; message: string }>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -347,73 +352,8 @@ export const useStore = create<AppState>((set, get) => ({
         console.error('Error saving to DB:', saveError);
       }
 
-      // === FACTS EXTRACTION: Save conversation to Diary ===
-      try {
-        // Get or create default project for user
-        const { data: projects } = await supabase
-          .from('projects')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_default', true)
-          .limit(1);
-
-        let projectId = projects && projects.length > 0 ? projects[0].id : null;
-
-        // Create default project if doesn't exist
-        if (!projectId) {
-          const { data: newProject } = await supabase
-            .from('projects')
-            .insert({
-              user_id: user.id,
-              name: 'Personal Workspace',
-              mission: 'Default project for personal conversations',
-              is_default: true,
-              status: 'active'
-            })
-            .select('id')
-            .single();
-
-          projectId = newProject?.id || null;
-        }
-
-        // Extract simple fact from conversation
-        if (projectId) {
-          const factSubject = content.substring(0, 100); // Use first 100 chars of question as subject
-          const factValue = {
-            question: content,
-            answer: assistantResponse.substring(0, 500), // Store first 500 chars of answer
-            personality: activePersonality?.name || 'Default',
-            timestamp: new Date().toISOString()
-          };
-
-          const { data: factData, error: factError } = await supabase.from('facts').insert({
-            project_id: projectId,
-            session_id: chatId,
-            user_id: user.id,
-            subject: factSubject,
-            value: factValue,
-            level: 'fact',
-            source_type: 'observed',
-            confidence: 1.0,
-            importance: 5,
-            tags: [activePersonality?.name || 'general', 'conversation'],
-            metadata: {
-              chat_id: chatId,
-              personality_id: activePersonality?.id
-            },
-            is_active: true
-          });
-
-          if (factError) {
-            console.error('❌ Failed to save fact:', factError);
-          } else {
-            console.log('📓 Fact saved to Diary');
-          }
-        }
-      } catch (factsError) {
-        console.warn('Facts extraction failed (non-critical):', factsError);
-        // Continue even if facts extraction fails
-      }
+      // Note: Facts are now saved automatically via Function Calling (save_fact)
+      // AI decides when to save facts based on user input
 
       // Update chat title if it's the first message
       const currentMessages = get().messages;
@@ -901,9 +841,9 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  // Helper method for Chat Completions API
+  // Helper method for Chat Completions API (with Function Calling)
   _handleChatCompletionsAPI: async (chatId: string, content: string, activePersonality: Personality | null, messages: Message[], settings: UserSettings) => {
-    const { openaiService } = get();
+    const { openaiService, user } = get();
 
     // Build conversation history for OpenAI
     const conversationMessages = messages
@@ -914,29 +854,246 @@ export const useStore = create<AppState>((set, get) => ({
       }));
 
     // Add system message based on active personality
-    const systemMessage = activePersonality 
-      ? `You are ${activePersonality.name}. ${activePersonality.prompt}`
-      : 'You are a helpful assistant.';
+    const systemMessage = activePersonality
+      ? `You are ${activePersonality.name}. ${activePersonality.prompt}\n\nYou have access to memory functions to save, update, or delete facts about the user.
+
+IMPORTANT RULES for saving facts:
+- ONLY save facts when the user explicitly STATES information (e.g., "My name is...", "I like...", "I am from...")
+- DO NOT save the user's questions as facts (e.g., "What is my name?" is a question, not a fact)
+- DO NOT save unless the user is sharing new information about themselves
+- Save facts with clear, descriptive subjects like "user_name", "user_location", "preference_coffee"
+
+Use save_fact when the user shares important information about themselves, their preferences, or explicitly asks you to remember something.`
+      : 'You are a helpful assistant with access to memory functions. Use them to save important facts about the user.\n\nONLY save facts when users explicitly STATE information, NOT when they ask questions.';
 
     // Add the new user message
     conversationMessages.push({ role: 'user', content });
 
-    // Call OpenAI Chat Completion API
-    const response = await openaiService.createChatCompletion([
+    // === DEFINE FUNCTION CALLING TOOLS ===
+    const tools = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'save_fact',
+          description: 'Save an important fact about the user to long-term memory. Use this when the user shares personal information, preferences, or explicitly asks you to remember something.',
+          parameters: {
+            type: 'object',
+            properties: {
+              subject: {
+                type: 'string',
+                description: 'Short category/key for the fact (e.g., "user_name", "favorite_color", "occupation", "preference_coffee")'
+              },
+              value: {
+                type: 'string',
+                description: 'The actual fact value or detailed information'
+              },
+              confidence: {
+                type: 'number',
+                description: 'Confidence level 0.0-1.0 (default: 0.9). Use 1.0 for user-stated facts, lower for inferred.',
+                default: 0.9
+              },
+              importance: {
+                type: 'number',
+                description: 'Importance rating 1-10 (default: 5)',
+                default: 5
+              }
+            },
+            required: ['subject', 'value']
+          }
+        }
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'update_fact',
+          description: 'Update an existing fact about the user. Use this when correcting or refining previously saved information.',
+          parameters: {
+            type: 'object',
+            properties: {
+              fact_id: {
+                type: 'string',
+                description: 'ID of the fact to update (obtained from search results)'
+              },
+              subject: {
+                type: 'string',
+                description: 'Updated subject/category (optional)'
+              },
+              value: {
+                type: 'string',
+                description: 'Updated value (optional)'
+              },
+              confidence: {
+                type: 'number',
+                description: 'Updated confidence 0.0-1.0 (optional)'
+              },
+              importance: {
+                type: 'number',
+                description: 'Updated importance 1-10 (optional)'
+              }
+            },
+            required: ['fact_id']
+          }
+        }
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'delete_fact',
+          description: 'Delete a fact from memory. Use this when the user asks to forget something or when information becomes outdated.',
+          parameters: {
+            type: 'object',
+            properties: {
+              fact_id: {
+                type: 'string',
+                description: 'ID of the fact to delete'
+              }
+            },
+            required: ['fact_id']
+          }
+        }
+      }
+    ];
+
+    // === FIRST API CALL (with tools) ===
+    let response = await openaiService.createChatCompletion([
       { role: 'system', content: systemMessage },
       ...conversationMessages
     ], {
       model: settings.model || 'gpt-4o',
       temperature: settings.temperature || 0.7,
       max_tokens: settings.max_tokens || 2000
-    });
+    }, tools, 'auto');
 
-    const assistantResponse = response.choices[0]?.message?.content || '';
-    const tokenUsage = response.usage;
+    const firstMessage = response.choices[0]?.message;
+    let totalUsage = response.usage;
+
+    // === HANDLE TOOL CALLS ===
+    if (firstMessage?.tool_calls && firstMessage.tool_calls.length > 0) {
+      console.log('🔧 Function calling detected:', firstMessage.tool_calls.length, 'calls');
+
+      // Add assistant message with tool_calls to conversation
+      conversationMessages.push({
+        role: 'assistant',
+        content: firstMessage.content || '',
+        tool_calls: firstMessage.tool_calls
+      });
+
+      // Get or create project for facts
+      const { data: projects } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('user_id', user!.id)
+        .eq('is_default', true)
+        .limit(1);
+
+      let projectId = projects && projects.length > 0 ? projects[0].id : null;
+
+      if (!projectId) {
+        const { data: newProject } = await supabase
+          .from('projects')
+          .insert({
+            user_id: user!.id,
+            name: 'Personal Workspace',
+            mission: 'Default project for personal conversations',
+            is_default: true,
+            status: 'active'
+          })
+          .select('id')
+          .single();
+
+        projectId = newProject?.id || null;
+      }
+
+      // Execute each tool call
+      for (const toolCall of firstMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
+
+        console.log(`📞 Calling function: ${functionName}`, functionArgs);
+
+        let functionResult: any;
+
+        try {
+          // Execute the appropriate function
+          if (functionName === 'save_fact' && projectId) {
+            functionResult = await get()._saveFact(
+              projectId,
+              chatId,
+              functionArgs.subject,
+              functionArgs.value,
+              functionArgs.confidence,
+              functionArgs.importance,
+              []
+            );
+          } else if (functionName === 'update_fact') {
+            functionResult = await get()._updateFact(
+              functionArgs.fact_id,
+              {
+                subject: functionArgs.subject,
+                value: functionArgs.value,
+                confidence: functionArgs.confidence,
+                importance: functionArgs.importance
+              }
+            );
+          } else if (functionName === 'delete_fact') {
+            functionResult = await get()._deleteFact(functionArgs.fact_id);
+          } else {
+            functionResult = { success: false, message: 'Unknown function or missing project' };
+          }
+
+          console.log('✅ Function result:', functionResult);
+
+        } catch (error) {
+          console.error('❌ Function execution error:', error);
+          functionResult = {
+            success: false,
+            message: error instanceof Error ? error.message : 'Function execution failed'
+          };
+        }
+
+        // Add function result to conversation
+        conversationMessages.push({
+          role: 'tool',
+          content: JSON.stringify(functionResult),
+          tool_call_id: toolCall.id
+        });
+      }
+
+      // === SECOND API CALL (get final response after function execution) ===
+      console.log('🔄 Requesting final response after function execution...');
+
+      const finalResponse = await openaiService.createChatCompletion([
+        { role: 'system', content: systemMessage },
+        ...conversationMessages
+      ], {
+        model: settings.model || 'gpt-4o',
+        temperature: settings.temperature || 0.7,
+        max_tokens: settings.max_tokens || 2000
+      });
+
+      // Aggregate token usage
+      if (finalResponse.usage && totalUsage) {
+        totalUsage = {
+          prompt_tokens: totalUsage.prompt_tokens + finalResponse.usage.prompt_tokens,
+          completion_tokens: totalUsage.completion_tokens + finalResponse.usage.completion_tokens,
+          total_tokens: totalUsage.total_tokens + finalResponse.usage.total_tokens
+        };
+      }
+
+      const assistantResponse = finalResponse.choices[0]?.message?.content || '';
+
+      return {
+        response: assistantResponse,
+        usage: totalUsage
+      };
+    }
+
+    // === NO TOOL CALLS - return direct response ===
+    const assistantResponse = firstMessage?.content || '';
 
     return {
       response: assistantResponse,
-      usage: tokenUsage
+      usage: totalUsage
     };
   },
 
@@ -1011,6 +1168,155 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (error) {
       console.error('Error in Assistants API:', error);
       throw error;
+    }
+  },
+
+  // ===== FACTS MANAGEMENT (for Function Calling) =====
+
+  /**
+   * Save a new fact to the diary
+   */
+  _saveFact: async (projectId, chatId, subject, value, confidence = 0.9, importance = 5, tags = []) => {
+    const { user, activePersonality } = get();
+
+    if (!user) {
+      return { success: false, message: 'User not authenticated' };
+    }
+
+    try {
+      console.log('💾 Saving fact:', { subject, value, confidence, importance });
+
+      // Prepare fact data
+      const factData = {
+        project_id: projectId,
+        session_id: chatId,
+        user_id: user.id,
+        subject: subject,
+        value: typeof value === 'string' ? { value } : value, // Ensure value is object
+        level: 'fact' as const,
+        source_type: 'user_stated' as const,
+        confidence: Math.min(Math.max(confidence, 0), 1), // Clamp 0-1
+        importance: Math.min(Math.max(importance, 1), 10), // Clamp 1-10
+        tags: [...tags, activePersonality?.name || 'general'],
+        metadata: {
+          chat_id: chatId,
+          personality_id: activePersonality?.id,
+          saved_at: new Date().toISOString()
+        },
+        is_active: true
+      };
+
+      const { data, error } = await supabase
+        .from('facts')
+        .insert(factData)
+        .select('id')
+        .single();
+
+      if (error) {
+        console.error('❌ Failed to save fact:', error);
+        return { success: false, message: `Failed to save fact: ${error.message}` };
+      }
+
+      console.log('✅ Fact saved successfully:', data.id);
+      return { success: true, message: 'Fact saved successfully', factId: data.id };
+
+    } catch (error) {
+      console.error('❌ Error saving fact:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error saving fact'
+      };
+    }
+  },
+
+  /**
+   * Update an existing fact
+   */
+  _updateFact: async (factId, updates) => {
+    const { user } = get();
+
+    if (!user) {
+      return { success: false, message: 'User not authenticated' };
+    }
+
+    try {
+      console.log('📝 Updating fact:', factId, updates);
+
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+
+      if (updates.subject !== undefined) updateData.subject = updates.subject;
+      if (updates.value !== undefined) {
+        updateData.value = typeof updates.value === 'string' ? { value: updates.value } : updates.value;
+      }
+      if (updates.confidence !== undefined) {
+        updateData.confidence = Math.min(Math.max(updates.confidence, 0), 1);
+      }
+      if (updates.importance !== undefined) {
+        updateData.importance = Math.min(Math.max(updates.importance, 1), 10);
+      }
+      if (updates.tags !== undefined) updateData.tags = updates.tags;
+
+      const { error } = await supabase
+        .from('facts')
+        .update(updateData)
+        .eq('id', factId)
+        .eq('user_id', user.id); // Security: only update own facts
+
+      if (error) {
+        console.error('❌ Failed to update fact:', error);
+        return { success: false, message: `Failed to update fact: ${error.message}` };
+      }
+
+      console.log('✅ Fact updated successfully');
+      return { success: true, message: 'Fact updated successfully' };
+
+    } catch (error) {
+      console.error('❌ Error updating fact:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error updating fact'
+      };
+    }
+  },
+
+  /**
+   * Delete (deactivate) a fact
+   */
+  _deleteFact: async (factId) => {
+    const { user } = get();
+
+    if (!user) {
+      return { success: false, message: 'User not authenticated' };
+    }
+
+    try {
+      console.log('🗑️ Deleting fact:', factId);
+
+      const { error } = await supabase
+        .from('facts')
+        .update({
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', factId)
+        .eq('user_id', user.id); // Security: only delete own facts
+
+      if (error) {
+        console.error('❌ Failed to delete fact:', error);
+        return { success: false, message: `Failed to delete fact: ${error.message}` };
+      }
+
+      console.log('✅ Fact deleted successfully');
+      return { success: true, message: 'Fact deleted successfully' };
+
+    } catch (error) {
+      console.error('❌ Error deleting fact:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error deleting fact'
+      };
     }
   },
 

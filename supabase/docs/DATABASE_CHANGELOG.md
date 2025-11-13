@@ -2,7 +2,7 @@
 
 **Проект:** ChatOpenAI Integration Assistant
 **База данных:** Supabase PostgreSQL
-**Последнее обновление:** 2025-11-05
+**Последнее обновление:** 2025-11-13
 
 ---
 
@@ -35,6 +35,54 @@
 ---
 
 ## 🚀 Recent Changes (November 2025)
+
+### 2025-11-13 - Sprint 6: Function Calling (No database changes) ✅
+
+**Status:** ✅ Sprint 6 Complete (Application layer only)
+
+**Sprint 6 Focus:** Function Calling для автосохранения фактов
+
+**What was built:**
+- ✅ OpenAI Service расширен для Function Calling (src/lib/openai.ts)
+- ✅ Helper методы: _saveFact(), _updateFact(), _deleteFact()
+- ✅ AI автоматически сохраняет факты через save_fact() function
+- ✅ System prompt для правильного использования функций
+
+**Database Status:**
+- ⚠️ **ОГРАНИЧЕНИЕ ОБНАРУЖЕНО:** `facts` таблица НЕ имеет поля `embedding`
+- ⚠️ Semantic search для facts **НЕ РАБОТАЕТ** (только text matching)
+- ✅ Function Calling сохраняет факты корректно
+- ❌ Memory retrieval работает неполноценно (text search вместо vector search)
+
+**Known Limitation:**
+```
+ПРОБЛЕМА:
+Пользователь: "Как меня зовут?"
+→ Memory Service ищет текст "как меня зовут" в facts.subject и facts.value
+→ НЕ находит факт {subject: "user_name", value: "Руслан"}
+→ AI отвечает: "Не знаю как тебя зовут"
+
+ПРИЧИНА:
+- document_chunks имеет embedding vector(1536) ✅
+- personality_embeddings имеет embedding vector(1536) ✅
+- facts НЕ имеет embedding ❌
+
+РЕШЕНИЕ:
+См. BACKLOG.md "Semantic Search для Facts таблицы" (Priority: CRITICAL)
+```
+
+**Next Action Required:**
+1. Миграция: добавить `embedding vector(1536)` в facts
+2. SQL функция: `search_facts()` с vector search
+3. Обновить Memory Service: использовать embeddings вместо text matching
+
+**Impact:**
+- Function Calling работает идеально ✅
+- Facts сохраняются правильно ✅
+- Retrieval работает только для exact text matches ⚠️
+- Semantic memory для Diary блокирована до добавления embeddings ❌
+
+---
 
 ### 2025-11-05 - Sprint 4 Complete: Phase 2 Unified Memory System ✅
 

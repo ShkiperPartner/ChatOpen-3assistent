@@ -1,8 +1,8 @@
 # Project Backlog
 
 **Project:** ChatOpenAI Integration Assistant - AI Partnership OS
-**Version:** 0.4.0
-**Last Updated:** 2025-11-05
+**Version:** 0.5.0
+**Last Updated:** 2025-11-13
 
 > **📋 Authoritative Source:** This is the SINGLE SOURCE OF TRUTH for:
 > - ✅ **Detailed implementation plan** with checklists
@@ -25,6 +25,40 @@
 ---
 
 ## 🎯 Recent Updates
+
+### 2025-11-13 - Sprint 6 Complete: Function Calling для автосохранения фактов! ✅
+**Status:** ✅ Complete (с ограничениями)
+**Description:** AI автоматически сохраняет факты о пользователе через Function Calling
+**Details:**
+- ✅ OpenAI Service расширен: Tool, ToolCall, FunctionDefinition types
+- ✅ Helper методы: _saveFact(), _updateFact(), _deleteFact()
+- ✅ Function Calling integration в _handleChatCompletionsAPI
+- ✅ Три функции: save_fact, update_fact, delete_fact
+- ✅ System prompt предотвращает сохранение вопросов как фактов
+- ⚠️ **Ограничение:** facts таблица НЕ имеет embeddings (только text search)
+
+**Что работает:**
+- ✅ Пользователь: "Меня зовут Руслан" → AI сохраняет {subject: "user_name", value: "Руслан"}
+- ✅ Facts сохраняются в БД с правильной структурой (confidence, importance, tags)
+- ✅ Function Calling работает стабильно (двухэтапный процесс)
+
+**Что НЕ работает:**
+- ❌ Semantic search для facts - запрос "Как меня зовут?" НЕ находит факт "user_name: Руслан"
+- ❌ Нужен vector search для правильного retrieval (см. новую задачу ниже)
+
+**Created Files:**
+- Расширены типы в `src/lib/openai.ts`
+- Добавлены методы в `src/store/useStore.ts`
+
+**Modified Files:**
+- `src/lib/openai.ts` - Function Calling support
+- `src/store/useStore.ts` - _saveFact, _updateFact, _deleteFact, function calling logic
+- `PROJECT_ARCHITECTURE.md` - Sprint 6 documentation
+- `DATABASE_CHANGELOG.md` - limitations documented
+
+**Next Step:** Добавить embeddings в facts таблицу для semantic search
+
+---
 
 ### 2025-11-05 - Sprint 4 Complete: UI Components Ready! 🎉
 **Status:** ✅ Complete
@@ -230,9 +264,27 @@ Ready for Phase 3 planning.
 
 #### 📋 Planned (High Priority)
 
-1. [ ] **Phase 3: Cross-Assistant Memory** - Shared intelligence между AI помощниками
+1. [ ] **Semantic Search для Facts таблицы** - Vector search для Diary
+   - Priority: **CRITICAL** (блокирует полноценную работу памяти)
+   - Dependencies: Phase 2 Sprint 6 complete ✅
+   - Estimated effort: Medium (1 week)
+   - **Why:** Текущий text search не находит семантически похожие факты
+   - **Problem:** "Как меня зовут?" НЕ находит факт {subject: "user_name", value: "Руслан"}
+   - **Tasks:**
+     - [ ] Миграция БД: добавить колонку `embedding vector(1536)` в facts
+     - [ ] Обновить `_saveFact()`: генерировать embedding при сохранении
+     - [ ] Создать SQL функцию `search_facts()` с vector search (как search_document_chunks)
+     - [ ] Обновить Memory Service `searchFacts()`: использовать embeddings вместо text matching
+     - [ ] Добавить vector index для facts.embedding (ivfflat)
+     - [ ] Протестировать semantic search: "Как меня зовут?" → находит "user_name: Руслан"
+   - **Expected Result:**
+     - ✅ Facts retrieval работает семантически (не только text matching)
+     - ✅ Diary memory на равных с Library и Desk (все три используют vector search)
+     - ✅ AI правильно вспоминает факты из прошлых разговоров
+
+2. [ ] **Phase 3: Cross-Assistant Memory** - Shared intelligence между AI помощниками
    - Priority: High
-   - Dependencies: Phase 2 complete ✅
+   - Dependencies: Semantic Search для Facts complete ✅
    - Estimated effort: Large (3-4 weeks)
    - Tasks:
      - Shared memory pool design
@@ -241,7 +293,7 @@ Ready for Phase 3 planning.
      - Context handoff between assistants
      - Permission system for shared memory
 
-2. [ ] **Advanced Memory Features** - AI-powered enhancements
+3. [ ] **Advanced Memory Features** - AI-powered enhancements
    - Priority: Medium
    - Dependencies: Phase 3 in progress
    - Estimated effort: Medium (2 weeks)

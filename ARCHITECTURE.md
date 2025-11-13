@@ -1,8 +1,8 @@
 # Project Architecture
 
 **Project:** ChatOpenAI Integration Assistant - AI Partnership OS
-**Version:** 0.3.0
-**Last Updated:** 2025-02-29
+**Version:** 0.5.0
+**Last Updated:** 2025-11-13
 
 ---
 
@@ -49,10 +49,12 @@
 
 ### AI & ML
 ```
-- LLM: OpenAI GPT-4 (via Assistants API)
+- LLM: OpenAI GPT-4 (via Chat Completions API + Assistants API)
+- Function Calling: OpenAI Functions для автоматического сохранения фактов
 - Embeddings: text-embedding-3-small (1536 dimensions)
 - Vector Search: pgvector (ivfflat index, cosine similarity)
 - RAG: OpenAI Files API + Vector Stores
+- Memory: 3 типа (Library 📚 + Desk 💼 + Diary 📓)
 ```
 
 ### Key Dependencies
