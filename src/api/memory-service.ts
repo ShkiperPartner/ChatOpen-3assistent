@@ -318,22 +318,31 @@ export class MemoryService {
     limit: number = 5
   ): Promise<MemoryResult[]> {
     try {
+      console.log('📓 searchDiary called with:', { queryText, userId, projectId, limit });
       const results: MemoryResult[] = [];
 
       // 1. Поиск в facts
+      console.log('📓 Searching facts...');
       const factsResults = await this.searchFacts(queryText, projectId, limit);
+      console.log('📓 Facts results:', factsResults.length);
       results.push(...factsResults);
 
       // 2. Поиск в thread_summaries
+      console.log('📓 Searching summaries...');
       const summariesResults = await this.searchSummaries(queryText, projectId, limit);
+      console.log('📓 Summaries results:', summariesResults.length);
       results.push(...summariesResults);
 
       // 3. Поиск в decisions
+      console.log('📓 Searching decisions...');
       const decisionsResults = await this.searchDecisions(queryText, projectId, limit);
+      console.log('📓 Decisions results:', decisionsResults.length);
       results.push(...decisionsResults);
 
       // Сортируем по relevance
       results.sort((a, b) => b.relevance - a.relevance);
+
+      console.log('📓 searchDiary total results:', results.length);
 
       return results.slice(0, limit);
     } catch (error) {
