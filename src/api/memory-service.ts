@@ -355,6 +355,8 @@ export class MemoryService {
     limit: number = 5
   ): Promise<MemoryResult[]> {
     try {
+      console.log('🔍 searchFacts called with:', { queryText, projectId, limit });
+
       let query = supabase
         .from('facts')
         .select('subject, value, importance, tags, metadata, created_at')
@@ -376,6 +378,11 @@ export class MemoryService {
       const { data, error } = await query;
 
       if (error) throw error;
+
+      console.log('📊 searchFacts found:', data?.length || 0, 'facts');
+      if (data && data.length > 0) {
+        console.log('📝 First fact:', data[0]);
+      }
 
       return (data || []).map((item: any) => ({
         source: 'diary' as MemorySource,
