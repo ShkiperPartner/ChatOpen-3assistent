@@ -357,34 +357,60 @@ export class MemoryService {
     try {
       console.log('🔍 searchFacts called with:', { queryText, projectId, limit });
 
+      // Получаем больше facts для фильтрации в JS (limit * 3)
+      // Потому что будем фильтровать по queryText в subject ИЛИ value
       let query = supabase
         .from('facts')
         .select('subject, value, importance, tags, metadata, created_at')
         .eq('is_active', true)
         .order('importance', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(limit);
+        .limit(limit * 3); // Берём больше для последующей фильтрации
 
       if (projectId) {
         query = query.eq('project_id', projectId);
       }
 
-      // Simplified text search - только по subject (без JSONB casting)
-      // TODO: Implement proper full-text search with PostgreSQL FTS
-      if (queryText && queryText.length > 0) {
-        query = query.ilike('subject', `%${queryText}%`);
-      }
-
+      // НЕ фильтруем на уровне SQL - фильтруем в JS чтобы искать в value тоже
       const { data, error } = await query;
 
       if (error) throw error;
 
-      console.log('📊 searchFacts found:', data?.length || 0, 'facts');
-      if (data && data.length > 0) {
-        console.log('📝 First fact:', data[0]);
+      console.log('📊 searchFacts got:', data?.length || 0, 'raw facts from DB');
+
+      // Фильтрация в JavaScript: ищем в subject ИЛИ в value
+      let filteredData = data || [];
+
+      if (queryText && queryText.length > 0) {
+        const lowerQuery = queryText.toLowerCase();
+        filteredData = filteredData.filter((item: any) => {
+          // Ищем в subject
+          const subjectMatch = item.subject?.toLowerCase().includes(lowerQuery);
+
+          // Ищем в value (JSON → string)
+          const valueString = JSON.stringify(item.value).toLowerCase();
+          const valueMatch = valueString.includes(lowerQuery);
+
+          const matched = subjectMatch || valueMatch;
+
+          if (matched) {
+            console.log(`✅ Matched fact: "${item.subject.substring(0, 50)}..." (subject: ${subjectMatch}, value: ${valueMatch})`);
+          }
+
+          return matched;
+        });
+
+        console.log('🎯 After filtering:', filteredData.length, 'matching facts');
       }
 
-      return (data || []).map((item: any) => ({
+      // Берём топ-N после фильтрации
+      const topResults = filteredData.slice(0, limit);
+
+      if (topResults.length > 0) {
+        console.log('📝 First matched fact:', topResults[0]);
+      }
+
+      return topResults.map((item: any) => ({
         source: 'diary' as MemorySource,
         content: `${item.subject}: ${JSON.stringify(item.value)}`,
         relevance: item.importance / 10, // Normalize 1-10 to 0-1
