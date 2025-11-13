@@ -282,6 +282,7 @@ export const useStore = create<AppState>((set, get) => ({
             enrichedContent = `${contextParts.join('\n')}\n\n[User Question]: ${content}`;
 
             console.log('🚀 Context enriched with memory');
+            console.log('📤 Sending to AI:', enrichedContent);
           } else {
             console.log('ℹ️ No relevant memory found');
           }
